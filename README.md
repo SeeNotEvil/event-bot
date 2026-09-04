@@ -1,0 +1,196 @@
+# Telegram Event Bot
+
+Telegram-бот для создания, просмотра, завершения, переноса и мягкого удаления событий и напоминаний через свободный русский текст. Решение о последовательности действий принимает LLM; приложение предоставляет ей только строго описанные tools.
+
+## Архитектура
+
+```text
+Telegram
+   │
+   ▼
+Telegram Adapter
+   │
+   ▼
+BotBrain / AgentRuntime
+   │
+   ▼
+OpenAI Responses API
+   │ tool calls
+   ▼
+Tool Runtime → Tool Registry
+   │
+   ├── create_events ┐
+   ├── search_events ├── Application Actions → Kysely → MySQL
+   ├── search_schedule ┤
+   ├── complete_event ┤
+   ├── reschedule_event ┤
+   ├── delete_event ─┤
+   ├── delete_events ┤
+   ├── create_notification ┤
+   ├── search_notifications ┤
+   └── delete_notification ┘
+
+LLM
+   ├── send_message ────┐
+   └── send_event_list ─┴── Telegram Adapter → Telegram
+
+Notification Worker
+   │ claim due notifications
+   ▼
+Application Actions → Kysely → MySQL
+   │
+   ▼
+Telegram Adapter → Telegram
+```
+
+LLM не получает доступ к БД, application actions, JavaScript или динамическим импортам. `ToolRegistry` — статический whitelist, а `ToolRuntime` проверяет аргументы и результаты Zod-схемами.
+
+## Запуск
+
+Требования: Docker Compose либо Node.js 22 и MySQL 8.4.
+
+1. Создайте конфигурацию:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Заполните как минимум:
+
+   ```text
+   TELEGRAM_BOT_TOKEN=...
+   OPENAI_API_KEY=...
+   MYSQL_PASSWORD=...
+   MYSQL_ROOT_PASSWORD=...
+   ```
+
+3. Запустите локальное окружение:
+
+   ```bash
+   docker compose up --build
+   ```
+
+По умолчанию используется polling. При запуске он удаляет ранее зарегистрированный webhook, поэтому для local и production рекомендуется использовать разные Telegram bot tokens.
+
+Healthcheck доступен на `GET http://localhost:3000/health`.
+
+Compose запускает `app`, `worker` и `mysql`. Worker не получает Telegram updates: он только отправляет наступившие напоминания через Bot API.
+
+### Webhook mode
+
+Установите:
+
+```text
+TELEGRAM_MODE=webhook
+TELEGRAM_WEBHOOK_URL=https://example.com/telegram/webhook
+TELEGRAM_WEBHOOK_SECRET=<случайная секретная строка>
+```
+
+После запуска приложение зарегистрирует webhook и будет проверять заголовок `X-Telegram-Bot-Api-Secret-Token`. TLS/reverse proxy находятся за пределами этого проекта.
+
+## Команды разработки
+
+```bash
+npm run dev
+npm run worker:dev
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run db:migrate
+```
+
+MySQL integration suite выключен по умолчанию. Для disposable Compose-базы:
+
+```bash
+docker compose up -d mysql
+RUN_MYSQL_TESTS=1 npm test -- tests/application/mysql.integration.test.ts
+```
+
+Тест создаёт уникальных пользователей и удаляет их в конце; чужие записи не очищает.
+
+## Agent runtime
+
+- Используется OpenAI Responses API и настраиваемая модель `OPENAI_MODEL` (`gpt-5.4-mini` по умолчанию).
+- Бюджет ответа модели задаётся `OPENAI_MAX_OUTPUT_TOKENS` (`16384` по умолчанию), чтобы в один tool call помещался пакет до 100 событий.
+- `tool_choice: required`, `parallel_tool_calls: false`, `strict: true`.
+- Все optional tool values представлены обязательными ключами с `null`.
+- Результат каждого non-terminal tool возвращается модели как `function_call_output` с исходным `call_id`.
+- Ответ модели пользователю возможен только через terminal tools `send_message` и `send_event_list`.
+- Один запрос ограничен десятью tools по умолчанию.
+- Между Telegram-сообщениями сохраняются последние 50 видимых реплик. Tool traces не сохраняются, списки читаются через `search_schedule`, а перед изменениями события всегда перечитываются через специализированные search-tools.
+- System prompt задаёт цель, границы безопасности и правила честного ответа, но не содержит ручного intent-router. Форматы, лимиты и предусловия находятся в descriptions и строгих схемах tools; последовательность вызовов выбирает модель.
+- Вопросы и сообщения, не требующие чтения или изменения расписания, модель свободно обрабатывает по общим знаниям и отвечает через `send_message`. Schedule-tools для обычной беседы не вызываются; недоступные персональные или актуальные внешние данные не выдумываются.
+- Ираида — личная помощница пользователя: её основная роль — управлять расписанием, вести события и напоминать о них. Она спокойная, уверенная, краткая и слегка загадочная, начинает с факта или результата, избегает сарказма и фамильярности и лишь изредка использует уместное обращение «мой господин» или «моя госпожа», не угадывая форму при недостаточном контексте.
+
+OpenAI integration следует официальному [руководству по function calling](https://developers.openai.com/api/docs/guides/function-calling). Выбранная модель поддерживает Responses API и function calling согласно [OpenAI Docs](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
+
+## Поведение V1
+
+- Работают только личные чаты и текстовые сообщения.
+- При каждом взаимодействии профиль пользователя синхронизирует из Telegram `username`, `first_name` и `last_name`; display name передаётся LLM как справочная часть серверного контекста.
+- В списке перед названием каждого события Telegram Adapter автоматически добавляет `first_name`, например `Ксюша — Стоматолог`; модель не передаёт и не формирует имя сама.
+- Списки формируются через `search_schedule`, который одним read-only запросом возвращает события с вложенными напоминаниями. «События на сегодня» использует пересечение с локальной сегодняшней датой, а «все события» — все записи со статусом `active` без ограничения даты.
+- Завершение выполняется через `search_events → complete_event`. Событие получает статус `completed` и UTC-время `completed_at`, а все его `pending`-напоминания атомарно отменяются. Повторное завершение идемпотентно.
+- «Покажи выполненные события» выбирает только статус `completed`. В Telegram дата, время, имя и название выполненного события зачёркиваются через message entity; HTML/Markdown в данные не добавляются.
+- Под каждым событием показываются все найденные `pending`-напоминания. Для запроса именно напоминаний можно отдельно ограничить их локальный временной диапазон и исключить события без совпадений.
+- Напоминание создаётся только по явной просьбе пользователя. Для одного события можно создать несколько напоминаний с разным временем; одинаковая пара `event_id + remind_at_utc` не дублируется.
+- `create_events` атомарно создаёт от 1 до 100 событий одним вызовом. Все элементы сначала валидируются, затем записываются одной multi-row операцией в транзакции; ошибка любой позиции оставляет пакет целиком несохранённым.
+- Если в пакете хотя бы у одного события нет однозначной даты, бот задаёт одно объединённое уточнение и ничего не создаёт. После ответа весь исходный пакет восстанавливается из истории и отправляется повторно одним вызовом.
+- Для 1–10 созданных событий подтверждение перечисляет весь набор, для 11–100 показывает количество и общий диапазон дат. Запрос свыше 100 событий нужно разделить.
+- Для нового события агент использует ID из результата `create_events` при последующем `create_notification`, для существующего — ID из свежего `search_events`.
+- Удаление напоминания выполняется через `search_notifications → delete_notification`. Удаление мягкое: `pending` становится `cancelled`, а уже отправленное `sent` остаётся в истории.
+- При удалении active- или completed-события все его `pending`-напоминания переводятся в `cancelled` в той же транзакции.
+- Перенос выполняется через `search_events → search_notifications → reschedule_event`. Если у события есть `pending`-напоминания и пользователь не задал новые, бот сначала показывает текущие времена и спрашивает, когда напомнить теперь; до ответа данные не меняются.
+- `reschedule_event` одной транзакцией сохраняет новый график события и полностью заменяет набор его `pending`-напоминаний. Можно задать несколько новых времён или ответить «не напоминай»; `sent`-история остаётся неизменной.
+- При переносе неуказанное время сохраняется, а для интервала без новой конечной даты сохраняется прежняя длительность.
+- Timezone по умолчанию — `Europe/Moscow`; Telegram не передаёт timezone пользователя.
+- Неделя считается с понедельника по воскресенье.
+- Однозначные относительные даты обрабатываются сразу: например, «завтра в 13 00» превращается в завтрашнюю дату и время `13:00` без вопроса о годе.
+- Для абсолютной даты без года выбирается ближайшее непрошедшее вхождение; уточнение задаётся только при реальной неоднозначности или отсутствии даты.
+- Явный запрос на массовое удаление выполняется одним транзакционным `delete_events` для 2–100 ID из свежего результата `search_events`; при недоступности хотя бы одного ID пакет не меняется.
+- При неоднозначном удалении бот перечисляет варианты и ничего не изменяет. Ответ вроде «второй» понимается по короткой истории, после чего события всё равно ищутся заново.
+- Если после актуального поиска цель изменения не найдена, бот отвечает «Я не могу этого сделать: …» с короткой причиной. Пустая выборка при обычном просмотре остаётся нормальным ответом «Событий нет», а временная техническая ошибка не выдаётся за невозможность действия.
+- Удаление меняет `status` с `active` или `completed` на `deleted`; строки физически не удаляются, а ранее сохранённый `completed_at` сохраняется.
+
+## Структура
+
+```text
+src/
+├── app.ts                    # composition root и lifecycle
+├── worker.ts                 # цикл доставки напоминаний
+├── telegram/                 # grammY, webhook, форматирование
+├── agent/                    # BotBrain, AgentRuntime, prompt
+│   └── tools/                # registry, runtime и двенадцать tools
+├── application/              # атомарные actions событий, расписания и напоминаний
+├── db/                       # Kysely connection и migrations
+├── config/
+└── types/
+```
+
+REST API, recurring events, массовое завершение, возврат completed-события в active, web UI, ручной intent-router и ручной NLP-парсер дат отсутствуют.
+
+## Notification worker
+
+`notifications.remind_at_utc` хранится в UTC, а `timezone` сохраняет исходную IANA-зону пользователя. Статусы: `pending`, `sent`, `cancelled`.
+
+```text
+notifications
+--------------------------------
+id                  BIGINT PK
+event_id            BIGINT FK
+remind_at_utc       DATETIME(3)
+timezone            VARCHAR(64)
+status              VARCHAR(16)
+attempts            INT
+lock_token          VARCHAR(36) NULL
+locked_at           DATETIME(3) NULL
+sent_at             DATETIME(3) NULL
+last_error          TEXT NULL
+created_at          DATETIME(3)
+updated_at          DATETIME(3)
+```
+
+Настройки worker имеют безопасные значения по умолчанию и при необходимости меняются через `NOTIFICATION_POLL_INTERVAL_MS`, `NOTIFICATION_BATCH_SIZE` и `NOTIFICATION_LOCK_TIMEOUT_MS`.
+
+Worker выбирает due-записи пачками через `FOR UPDATE SKIP LOCKED`, ставит временный `lock_token`, отправляет каждую запись отдельно и переводит её в `sent` только после успешного Telegram API. При ошибке lock снимается, текст ошибки сохраняется, а `pending`-запись доступна для следующей попытки. Семантика доставки — at-least-once.
