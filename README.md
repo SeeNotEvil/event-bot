@@ -1,6 +1,6 @@
 # Telegram Event Bot
 
-Telegram-бот для создания, просмотра, завершения, переноса и мягкого удаления событий и напоминаний через свободный русский текст. Решение о последовательности действий принимает LLM; приложение предоставляет ей только строго описанные tools.
+Telegram-бот для создания, просмотра, завершения, переноса и мягкого удаления событий и напоминаний через свободный русский текст. Бот также запоминает явно заданные предпочтения общения. Решение о последовательности действий принимает LLM; приложение предоставляет ей только строго описанные tools.
 
 ## Архитектура
 
@@ -28,7 +28,8 @@ Tool Runtime → Tool Registry
    ├── delete_events ┤
    ├── create_notification ┤
    ├── search_notifications ┤
-   └── delete_notification ┘
+   ├── delete_notification ┤
+   └── save_user_preferences ┘
 
 LLM
    ├── send_message ────┐
@@ -122,6 +123,7 @@ RUN_MYSQL_TESTS=1 npm test -- tests/application/mysql.integration.test.ts
 - System prompt задаёт цель, границы безопасности и правила честного ответа, но не содержит ручного intent-router. Форматы, лимиты и предусловия находятся в descriptions и строгих схемах tools; последовательность вызовов выбирает модель.
 - Вопросы и сообщения, не требующие чтения или изменения расписания, модель свободно обрабатывает по общим знаниям и отвечает через `send_message`. Schedule-tools для обычной беседы не вызываются; недоступные персональные или актуальные внешние данные не выдумываются.
 - Ираида — личная помощница пользователя: её основная роль — управлять расписанием, вести события и напоминать о них. Она спокойная, уверенная, краткая и слегка загадочная, начинает с факта или результата, избегает сарказма и фамильярности и лишь изредка использует уместное обращение «мой господин» или «моя госпожа», не угадывая форму при недостаточном контексте.
+- Явно высказанные устойчивые предпочтения сохраняются через `save_user_preferences` одной цельной памяткой до 4000 символов. Она автоматически добавляется в каждый следующий agent context; новое обращение заменяет прежнее, а просьба забыть всё удаляет памятку. Предпочтения влияют на персонализацию, но не отменяют системные правила и tool-контракты.
 
 OpenAI integration следует официальному [руководству по function calling](https://developers.openai.com/api/docs/guides/function-calling). Выбранная модель поддерживает Responses API и function calling согласно [OpenAI Docs](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
 
@@ -161,7 +163,7 @@ src/
 ├── worker.ts                 # цикл доставки напоминаний
 ├── telegram/                 # grammY, webhook, форматирование
 ├── agent/                    # BotBrain, AgentRuntime, prompt
-│   └── tools/                # registry, runtime и двенадцать tools
+│   └── tools/                # registry, runtime и тринадцать tools
 ├── application/              # атомарные actions событий, расписания и напоминаний
 ├── db/                       # Kysely connection и migrations
 ├── config/
@@ -169,6 +171,17 @@ src/
 ```
 
 REST API, recurring events, массовое завершение, возврат completed-события в active, web UI, ручной intent-router и ручной NLP-парсер дат отсутствуют.
+
+## User preferences
+
+```text
+user_preferences
+--------------------------------
+user_id             BIGINT PK, FK users.id
+content             TEXT
+created_at          DATETIME(3)
+updated_at          DATETIME(3)
+```
 
 ## Notification worker
 

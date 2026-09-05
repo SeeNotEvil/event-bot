@@ -10,6 +10,7 @@ import * as initialMigration from './migrations/001_initial.js';
 import * as userProfileMigration from './migrations/002_user_profile.js';
 import * as notificationsMigration from './migrations/003_notifications.js';
 import * as eventCompletionMigration from './migrations/004_event_completion.js';
+import * as userPreferencesMigration from './migrations/005_user_preferences.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -19,6 +20,7 @@ const migrationProvider: MigrationProvider = {
       '002_user_profile': userProfileMigration,
       '003_notifications': notificationsMigration,
       '004_event_completion': eventCompletionMigration,
+      '005_user_preferences': userPreferencesMigration,
     }),
 };
 

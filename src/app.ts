@@ -18,6 +18,7 @@ import { createRescheduleEventTool } from './agent/tools/rescheduleEvent.tool.js
 import { createSearchScheduleTool } from './agent/tools/searchSchedule.tool.js';
 import { createSendEventListTool } from './agent/tools/sendEventList.tool.js';
 import { createSendMessageTool } from './agent/tools/sendMessage.tool.js';
+import { createSaveUserPreferencesTool } from './agent/tools/saveUserPreferences.tool.js';
 import { ensureUser } from './application/users/ensureUser.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
@@ -78,6 +79,7 @@ async function main(): Promise<void> {
       .register(createCreateNotificationTool(database))
       .register(createSearchNotificationsTool(database))
       .register(createDeleteNotificationTool(database))
+      .register(createSaveUserPreferencesTool(database))
       .register(createSendMessageTool(telegram))
       .register(createSendEventListTool(telegram));
     const toolRuntime = new ToolRuntime(registry, logger);

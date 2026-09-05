@@ -14,6 +14,10 @@ import { processDueNotifications } from '../../src/application/notifications/pro
 import { searchNotifications } from '../../src/application/notifications/searchNotifications.js';
 import { searchSchedule } from '../../src/application/schedule/searchSchedule.js';
 import { ensureUser } from '../../src/application/users/ensureUser.js';
+import {
+  getUserPreferences,
+  saveUserPreferences,
+} from '../../src/application/users/userPreferences.js';
 import { createDatabase } from '../../src/db/connection.js';
 import { migrateToLatest } from '../../src/db/migrate.js';
 import type { Database } from '../../src/db/types.js';
@@ -126,6 +130,27 @@ describeWithMysql('MySQL application actions', () => {
       expect(existingUser.lastName).toBe('Обновлённый');
       expect(existingUser.displayName).toBe('Иван Обновлённый');
       expect(existingUser.timezone).toBe('Europe/Moscow');
+
+      expect(await getUserPreferences(database, firstUser.id)).toBeNull();
+      await expect(
+        saveUserPreferences(database, firstUser.id, {
+          preferences: 'Обращение: Капитан.\nСтиль: кратко.',
+        }),
+      ).resolves.toEqual({
+        success: true,
+        preferences: 'Обращение: Капитан.\nСтиль: кратко.',
+      });
+      expect(await getUserPreferences(database, secondUser.id)).toBeNull();
+
+      await saveUserPreferences(database, firstUser.id, {
+        preferences: 'Обращение: Шеф.\nСтиль: кратко.',
+      });
+      expect(await getUserPreferences(database, firstUser.id)).toBe(
+        'Обращение: Шеф.\nСтиль: кратко.',
+      );
+
+      await saveUserPreferences(database, firstUser.id, { preferences: null });
+      expect(await getUserPreferences(database, firstUser.id)).toBeNull();
 
       const dentist = await createEvent(database, firstUser.id, {
         title: 'Стоматолог',

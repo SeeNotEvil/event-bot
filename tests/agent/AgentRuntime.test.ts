@@ -23,6 +23,7 @@ const context: AgentContext = {
   firstName: 'Иван',
   displayName: 'Иван Петров',
   telegramUsername: 'ivan_petrov',
+  userPreferences: null,
   timezone: 'Europe/Moscow',
   now: '2026-09-04T21:30:00+03:00',
 };

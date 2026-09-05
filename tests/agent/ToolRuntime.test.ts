@@ -12,6 +12,7 @@ import { createSearchNotificationsTool } from '../../src/agent/tools/searchNotif
 import { createRescheduleEventTool } from '../../src/agent/tools/rescheduleEvent.tool.js';
 import { createSearchScheduleTool } from '../../src/agent/tools/searchSchedule.tool.js';
 import { createSendEventListTool } from '../../src/agent/tools/sendEventList.tool.js';
+import { createSaveUserPreferencesTool } from '../../src/agent/tools/saveUserPreferences.tool.js';
 import { ToolRegistry } from '../../src/agent/tools/ToolRegistry.js';
 import { ToolRuntime } from '../../src/agent/tools/ToolRuntime.js';
 import { defineTool } from '../../src/agent/tools/Tool.js';
@@ -27,6 +28,7 @@ const context: AgentContext = {
   firstName: 'Иван',
   displayName: 'Иван Петров',
   telegramUsername: 'ivan_petrov',
+  userPreferences: null,
   timezone: 'Europe/Moscow',
   now: '2026-09-04T21:30:00+03:00',
 };
@@ -97,6 +99,7 @@ describe('ToolRegistry and ToolRuntime', () => {
       .register(createCreateNotificationTool(database))
       .register(createSearchNotificationsTool(database))
       .register(createDeleteNotificationTool(database))
+      .register(createSaveUserPreferencesTool(database))
       .specs();
 
     expect(specs.map((spec) => spec.name)).toEqual([
@@ -110,6 +113,7 @@ describe('ToolRegistry and ToolRuntime', () => {
       'create_notification',
       'search_notifications',
       'delete_notification',
+      'save_user_preferences',
     ]);
     expect(specs[0]?.parameters).toMatchObject({
       additionalProperties: false,
@@ -181,6 +185,11 @@ describe('ToolRegistry and ToolRuntime', () => {
       additionalProperties: false,
       required: ['notificationId'],
     });
+    expect(specs[10]?.parameters).toMatchObject({
+      additionalProperties: false,
+      required: ['preferences'],
+    });
+    expect(JSON.stringify(specs[10]?.parameters)).toContain('"maxLength":4000');
   });
 
   it('passes the trusted Telegram first name to the event-list adapter', async () => {

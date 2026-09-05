@@ -5,6 +5,7 @@ import {
   appendMessage,
   getRecentMessages,
 } from '../application/conversations/conversationHistory.js';
+import { getUserPreferences } from '../application/users/userPreferences.js';
 import type { Database } from '../db/types.js';
 import type { AgentContext, User } from '../types/domain.js';
 import type { AgentRuntime, AgentRunResult } from './AgentRuntime.js';
@@ -21,7 +22,10 @@ export class BotBrain {
   ) {}
 
   public async handleMessage(message: string, user: User): Promise<AgentRunResult> {
-    const history = await getRecentMessages(this.database, user.id, this.historyLimit);
+    const [history, userPreferences] = await Promise.all([
+      getRecentMessages(this.database, user.id, this.historyLimit),
+      getUserPreferences(this.database, user.id),
+    ]);
     await appendMessage(
       this.database,
       user.id,
@@ -41,6 +45,7 @@ export class BotBrain {
       firstName: user.firstName,
       displayName: user.displayName,
       telegramUsername: user.telegramUsername,
+      userPreferences,
       timezone: user.timezone,
       now: now.toISO({ suppressMilliseconds: true }) ?? now.toISO(),
     };

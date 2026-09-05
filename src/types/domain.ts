@@ -8,6 +8,7 @@ export type AgentContext = {
   firstName: string;
   displayName: string;
   telegramUsername: string | null;
+  userPreferences: string | null;
   timezone: string;
   now: string;
 };

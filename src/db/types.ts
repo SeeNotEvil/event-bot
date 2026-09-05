@@ -43,6 +43,13 @@ export interface ConversationMessagesTable {
   created_at: CreatedTimestamp;
 }
 
+export interface UserPreferencesTable {
+  user_id: number;
+  content: string;
+  created_at: CreatedTimestamp;
+  updated_at: UpdatedTimestamp;
+}
+
 export interface NotificationsTable {
   id: Generated<number>;
   event_id: number;
@@ -62,5 +69,6 @@ export interface Database {
   users: UsersTable;
   events: EventsTable;
   conversation_messages: ConversationMessagesTable;
+  user_preferences: UserPreferencesTable;
   notifications: NotificationsTable;
 }
