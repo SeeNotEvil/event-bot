@@ -19,7 +19,7 @@ export function createSendEventListTool(telegram: TelegramGateway) {
   return defineTool({
     name: 'send_event_list',
     description:
-      'Показывает структурированный список событий, их авторов и напоминаний через Telegram Adapter. Передавай events без изменений из свежего результата search_schedule и не добавляй данные самостоятельно. Это terminal interaction tool.',
+      'Показывает структурированный список событий, их авторов и напоминаний через Telegram Adapter. Передавай events без изменений из свежего результата search_schedule и не добавляй данные самостоятельно. Сформулируй короткий и точный title в узнаваемом голосе Ираиды, естественно используя активное обращение или лёгкий церемониальный оборот; не добавляй в title факты, которых нет в результате поиска. Это terminal interaction tool.',
     input: sendEventListInputSchema,
     output: sendEventListOutputSchema,
     terminal: true,
