@@ -10,7 +10,7 @@ import {
 
 export async function deleteEvent(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   rawInput: DeleteEventInput,
 ): Promise<DeleteEventOutput> {
   const input = deleteEventInputSchema.parse(rawInput);
@@ -20,7 +20,7 @@ export async function deleteEvent(
       .selectFrom('events')
       .select(['id', 'title'])
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', 'in', ['active', 'completed'])
       .forUpdate()
       .executeTakeFirst();
@@ -39,7 +39,7 @@ export async function deleteEvent(
       .updateTable('events')
       .set({ status: 'deleted', updated_at: now })
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', 'in', ['active', 'completed'])
       .executeTakeFirstOrThrow();
 

@@ -11,7 +11,7 @@ export type DueNotification = {
   eventDateTo: string | null;
   eventTime: string | null;
   telegramChatId: number;
-  firstName: string;
+  createdByName: string;
   timezone: string;
 };
 
@@ -54,7 +54,9 @@ async function claimDueNotifications(
     let query = transaction
       .selectFrom('notifications')
       .innerJoin('events', 'events.id', 'notifications.event_id')
-      .innerJoin('users', 'users.id', 'events.user_id')
+      .innerJoin('calendars', 'calendars.id', 'events.calendar_id')
+      .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
+      .leftJoin('users as personal_owner', 'personal_owner.id', 'calendars.user_id')
       .select([
         'notifications.id as notification_id',
         'notifications.event_id',
@@ -63,12 +65,27 @@ async function claimDueNotifications(
         'events.date_from',
         'events.date_to',
         'events.time as event_time',
-        'users.telegram_chat_id',
-        'users.first_name',
+        sql<number | null>`case
+          when calendars.type = 'group' then calendars.telegram_chat_id
+          else personal_owner.telegram_chat_id
+        end`.as('destination_chat_id'),
+        'event_creator.first_name as creator_first_name',
       ])
       .where('notifications.status', '=', 'pending')
       .where('notifications.remind_at_utc', '<=', nowForDatabase)
       .where('events.status', '=', 'active')
+      .where((expression) =>
+        expression.or([
+          expression.and([
+            expression('calendars.type', '=', 'group'),
+            expression('calendars.telegram_chat_id', 'is not', null),
+          ]),
+          expression.and([
+            expression('calendars.type', '=', 'personal'),
+            expression('personal_owner.telegram_chat_id', 'is not', null),
+          ]),
+        ]),
+      )
       .where((expression) =>
         expression.or([
           expression('notifications.locked_at', 'is', null),
@@ -108,18 +125,24 @@ async function claimDueNotifications(
       throw new Error('Notification claim updated an unexpected number of rows');
     }
 
-    return rows.map((row) => ({
-      claimToken,
-      notificationId: Number(row.notification_id),
-      eventId: Number(row.event_id),
-      eventTitle: row.event_title,
-      eventDateFrom: row.date_from,
-      eventDateTo: row.date_to,
-      eventTime: row.event_time === null ? null : row.event_time.slice(0, 5),
-      telegramChatId: Number(row.telegram_chat_id),
-      firstName: row.first_name ?? 'Пользователь',
-      timezone: row.timezone,
-    }));
+    return rows.map((row) => {
+      if (row.destination_chat_id === null) {
+        throw new Error('Claimed notification has no Telegram destination');
+      }
+
+      return {
+        claimToken,
+        notificationId: Number(row.notification_id),
+        eventId: Number(row.event_id),
+        eventTitle: row.event_title,
+        eventDateFrom: row.date_from,
+        eventDateTo: row.date_to,
+        eventTime: row.event_time === null ? null : row.event_time.slice(0, 5),
+        telegramChatId: Number(row.destination_chat_id),
+        createdByName: row.creator_first_name ?? 'Пользователь',
+        timezone: row.timezone,
+      };
+    });
   });
 }
 

@@ -77,7 +77,7 @@ export async function runNotificationWorker(): Promise<void> {
                 time: notification.eventTime,
               },
               localNow.toISO({ suppressMilliseconds: true }) ?? now.toISOString(),
-              notification.firstName,
+              notification.createdByName,
             );
           },
         });

@@ -19,7 +19,7 @@ function escapeLikePattern(value: string): string {
 
 export async function searchSchedule(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   timezone: string,
   rawInput: SearchScheduleInput,
 ): Promise<SearchScheduleOutput> {
@@ -41,26 +41,28 @@ export async function searchSchedule(
   const reminderToUtc = reminderTo ? formatDateForDatabase(reminderTo) : null;
   let eventsQuery = database
     .selectFrom('events')
-    .selectAll()
-    .where('user_id', '=', userId)
-    .where('status', 'in', eventStatuses);
+    .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
+    .selectAll('events')
+    .select('event_creator.first_name as creator_first_name')
+    .where('events.calendar_id', '=', calendarId)
+    .where('events.status', 'in', eventStatuses);
 
   if (input.query !== null) {
     const pattern = `%${escapeLikePattern(input.query)}%`;
     eventsQuery = eventsQuery.where((expression) =>
       expression.or([
-        expression('title', 'like', pattern),
-        expression('description', 'like', pattern),
+        expression('events.title', 'like', pattern),
+        expression('events.description', 'like', pattern),
       ]),
     );
   }
   if (input.eventDateFrom !== null) {
     eventsQuery = eventsQuery.where(
-      sql<boolean>`coalesce(${sql.ref('date_to')}, ${sql.ref('date_from')}) >= ${input.eventDateFrom}`,
+      sql<boolean>`coalesce(${sql.ref('events.date_to')}, ${sql.ref('events.date_from')}) >= ${input.eventDateFrom}`,
     );
   }
   if (input.eventDateTo !== null) {
-    eventsQuery = eventsQuery.where('date_from', '<=', input.eventDateTo);
+    eventsQuery = eventsQuery.where('events.date_from', '<=', input.eventDateTo);
   }
   if (input.requireReminder) {
     eventsQuery = eventsQuery.where((expression) => {
@@ -90,9 +92,9 @@ export async function searchSchedule(
   }
 
   const eventRows = await eventsQuery
-    .orderBy('date_from', 'asc')
-    .orderBy('time', 'asc')
-    .orderBy('id', 'asc')
+    .orderBy('events.date_from', 'asc')
+    .orderBy('events.time', 'asc')
+    .orderBy('events.id', 'asc')
     .limit(input.limit ?? 50)
     .execute();
 
@@ -111,7 +113,7 @@ export async function searchSchedule(
       'notifications.status',
       'events.title as event_title',
     ])
-    .where('events.user_id', '=', userId)
+    .where('events.calendar_id', '=', calendarId)
     .where('notifications.event_id', 'in', eventIds)
     .where('notifications.status', 'in', reminderStatuses);
 
@@ -153,6 +155,7 @@ export async function searchSchedule(
   return searchScheduleOutputSchema.parse({
     events: eventRows.map((event) => ({
       ...mapEvent(event),
+      createdByName: event.creator_first_name ?? 'Пользователь',
       notifications: notificationsByEventId.get(Number(event.id)) ?? [],
     })),
   });

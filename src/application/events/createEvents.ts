@@ -11,7 +11,8 @@ import {
 
 export async function createEvents(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
+  createdByUserId: number,
   rawInput: CreateEventsInput,
 ): Promise<CreateEventsOutput> {
   const input = createEventsInputSchema.parse(rawInput);
@@ -30,7 +31,8 @@ export async function createEvents(
       .insertInto('events')
       .values(
         input.events.map((event) => ({
-          user_id: userId,
+          user_id: createdByUserId,
+          calendar_id: calendarId,
           title: event.title,
           description: event.description,
           date_from: event.dateFrom,
@@ -61,7 +63,7 @@ export async function createEvents(
     const rows = await transaction
       .selectFrom('events')
       .selectAll()
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('id', '>=', firstEventId)
       .where('id', '<=', lastEventId)
       .orderBy('id', 'asc')

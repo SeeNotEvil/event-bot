@@ -18,8 +18,12 @@ import { silentLogger } from '../helpers.js';
 
 const context: AgentContext = {
   userId: 14,
+  calendarId: 7,
+  calendarType: 'personal',
+  calendarTitle: null,
   telegramUserId: 123,
   telegramChatId: 123,
+  telegramChatType: 'private',
   firstName: 'Иван',
   displayName: 'Иван Петров',
   telegramUsername: 'ivan_petrov',

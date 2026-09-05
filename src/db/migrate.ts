@@ -11,6 +11,7 @@ import * as userProfileMigration from './migrations/002_user_profile.js';
 import * as notificationsMigration from './migrations/003_notifications.js';
 import * as eventCompletionMigration from './migrations/004_event_completion.js';
 import * as userPreferencesMigration from './migrations/005_user_preferences.js';
+import * as sharedCalendarsMigration from './migrations/006_shared_calendars.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -21,6 +22,7 @@ const migrationProvider: MigrationProvider = {
       '003_notifications': notificationsMigration,
       '004_event_completion': eventCompletionMigration,
       '005_user_preferences': userPreferencesMigration,
+      '006_shared_calendars': sharedCalendarsMigration,
     }),
 };
 
@@ -34,7 +36,10 @@ export async function migrateToLatest(database: Kysely<Database>): Promise<void>
 
   for (const result of results ?? []) {
     if (result.status === 'Error') {
-      throw new Error(`Migration ${result.migrationName} failed`);
+      const causeMessage = error instanceof Error ? `: ${error.message}` : '';
+      throw new Error(`Migration ${result.migrationName} failed${causeMessage}`, {
+        cause: error,
+      });
     }
   }
 

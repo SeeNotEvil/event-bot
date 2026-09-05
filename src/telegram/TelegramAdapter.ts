@@ -18,6 +18,7 @@ export type DisplayNotification = {
 };
 
 export type DisplayScheduleEvent = DisplayEvent & {
+  createdByName: string;
   status: EventStatus;
   completedAt: string | null;
   notifications: DisplayNotification[];
@@ -36,14 +37,13 @@ export interface TelegramGateway {
     chatId: number,
     event: DisplayEvent,
     now: string,
-    firstName: string,
+    createdByName: string,
   ): Promise<string>;
   sendEventList(
     chatId: number,
     title: string,
     events: DisplayScheduleEvent[],
     now: string,
-    firstName: string,
   ): Promise<string>;
 }
 
@@ -84,10 +84,10 @@ function normalizeName(firstName: string): string {
 export function formatEventBlock(
   event: DisplayEvent,
   currentYear: number,
-  firstName: string,
+  createdByName: string,
 ): string {
   const time = event.time === null ? '' : `, ${event.time}`;
-  return `${formatRange(event, currentYear)}${time}\n${normalizeName(firstName)} — ${event.title}`;
+  return `${formatRange(event, currentYear)}${time}\n${normalizeName(createdByName)} — ${event.title}`;
 }
 
 function formatNotification(
@@ -109,10 +109,9 @@ function formatNotification(
 function formatEventSegments(
   event: DisplayScheduleEvent,
   currentYear: number,
-  firstName: string,
   maxLength: number,
 ): EventSegment[] {
-  const eventHeader = formatEventBlock(event, currentYear, firstName);
+  const eventHeader = formatEventBlock(event, currentYear, event.createdByName);
   const headerEntities: MessageEntity[] = event.status === 'completed'
     ? [{ type: 'strikethrough', offset: 0, length: eventHeader.length }]
     : [];
@@ -145,7 +144,6 @@ export function formatEventListMessages(
   title: string,
   events: DisplayScheduleEvent[],
   now: string,
-  firstName: string,
 ): FormattedTelegramMessage[] {
   const currentYear = DateTime.fromISO(now, { setZone: true }).year;
 
@@ -159,7 +157,7 @@ export function formatEventListMessages(
   const maxSegmentLength = TELEGRAM_MESSAGE_LIMIT - continuationTitle.length - 2;
 
   for (const event of events) {
-    const segments = formatEventSegments(event, currentYear, firstName, maxSegmentLength);
+    const segments = formatEventSegments(event, currentYear, maxSegmentLength);
 
     for (const segment of segments) {
       const separator = '\n\n';
@@ -200,18 +198,17 @@ export function formatEventList(
   title: string,
   events: DisplayScheduleEvent[],
   now: string,
-  firstName: string,
 ): string[] {
-  return formatEventListMessages(title, events, now, firstName).map((message) => message.text);
+  return formatEventListMessages(title, events, now).map((message) => message.text);
 }
 
 export function formatEventReminder(
   event: DisplayEvent,
   now: string,
-  firstName: string,
+  createdByName: string,
 ): string {
   const currentYear = DateTime.fromISO(now, { setZone: true }).year;
-  return `Напоминание\n\n${formatEventBlock(event, currentYear, firstName)}`;
+  return `Напоминание\n\n${formatEventBlock(event, currentYear, createdByName)}`;
 }
 
 export class TelegramAdapter implements TelegramGateway {
@@ -226,9 +223,9 @@ export class TelegramAdapter implements TelegramGateway {
     chatId: number,
     event: DisplayEvent,
     now: string,
-    firstName: string,
+    createdByName: string,
   ): Promise<string> {
-    const text = formatEventReminder(event, now, firstName);
+    const text = formatEventReminder(event, now, createdByName);
     await this.api.sendMessage(chatId, text);
     return text;
   }
@@ -238,9 +235,8 @@ export class TelegramAdapter implements TelegramGateway {
     title: string,
     events: DisplayScheduleEvent[],
     now: string,
-    firstName: string,
   ): Promise<string> {
-    const messages = formatEventListMessages(title, events, now, firstName);
+    const messages = formatEventListMessages(title, events, now);
 
     for (const message of messages) {
       await this.api.sendMessage(

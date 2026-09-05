@@ -10,7 +10,7 @@ function escapeLikePattern(value: string): string {
 
 export async function searchEvents(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   rawInput: SearchEventsInput,
 ): Promise<{ events: EventDto[] }> {
   const input = searchEventsInputSchema.parse(rawInput);
@@ -18,7 +18,7 @@ export async function searchEvents(
   let query = database
     .selectFrom('events')
     .selectAll()
-    .where('user_id', '=', userId)
+    .where('calendar_id', '=', calendarId)
     .where('status', 'in', statuses);
 
   if (input.query !== null) {

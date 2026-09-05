@@ -10,7 +10,7 @@ import { formatUtcDateTimeInZone } from './time.js';
 
 export async function deleteNotification(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   rawInput: DeleteNotificationInput,
 ): Promise<DeleteNotificationOutput> {
   const input = deleteNotificationInputSchema.parse(rawInput);
@@ -27,7 +27,7 @@ export async function deleteNotification(
         'events.title as event_title',
       ])
       .where('notifications.id', '=', input.notificationId)
-      .where('events.user_id', '=', userId)
+      .where('events.calendar_id', '=', calendarId)
       .where('notifications.status', '=', 'pending')
       .forUpdate()
       .executeTakeFirst();

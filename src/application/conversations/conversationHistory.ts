@@ -10,13 +10,13 @@ const messageSchema = z.object({
 
 export async function getRecentMessages(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   limit: number,
 ): Promise<ConversationMessage[]> {
   const rows = await database
     .selectFrom('conversation_messages')
     .select(['role', 'content'])
-    .where('user_id', '=', userId)
+    .where('calendar_id', '=', calendarId)
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(limit)
@@ -27,6 +27,7 @@ export async function getRecentMessages(
 
 export async function appendMessage(
   database: Kysely<Database>,
+  calendarId: number,
   userId: number,
   rawMessage: ConversationMessage,
   historyLimit: number,
@@ -38,6 +39,7 @@ export async function appendMessage(
       .insertInto('conversation_messages')
       .values({
         user_id: userId,
+        calendar_id: calendarId,
         role: message.role,
         content: message.content,
       })
@@ -46,7 +48,7 @@ export async function appendMessage(
     const staleRows = await transaction
       .selectFrom('conversation_messages')
       .select('id')
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .orderBy('created_at', 'desc')
       .orderBy('id', 'desc')
       .limit(10_000)

@@ -11,7 +11,7 @@ import {
 
 export async function completeEvent(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   rawInput: CompleteEventInput,
   now = new Date(),
 ): Promise<CompleteEventOutput> {
@@ -22,7 +22,7 @@ export async function completeEvent(
       .selectFrom('events')
       .selectAll()
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', 'in', ['active', 'completed'])
       .forUpdate()
       .executeTakeFirst();
@@ -54,7 +54,7 @@ export async function completeEvent(
         updated_at: now,
       })
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', '=', 'active')
       .executeTakeFirstOrThrow();
 
@@ -71,7 +71,7 @@ export async function completeEvent(
       .selectFrom('events')
       .selectAll()
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .executeTakeFirstOrThrow();
 
     return completeEventOutputSchema.parse({

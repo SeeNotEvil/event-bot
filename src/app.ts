@@ -19,6 +19,7 @@ import { createSearchScheduleTool } from './agent/tools/searchSchedule.tool.js';
 import { createSendEventListTool } from './agent/tools/sendEventList.tool.js';
 import { createSendMessageTool } from './agent/tools/sendMessage.tool.js';
 import { createSaveUserPreferencesTool } from './agent/tools/saveUserPreferences.tool.js';
+import { ensureCalendar } from './application/calendars/ensureCalendar.js';
 import { ensureUser } from './application/users/ensureUser.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
@@ -102,10 +103,12 @@ async function main(): Promise<void> {
     registerTelegramHandlers(bot, {
       brain,
       ensureUser: (input) => ensureUser(database, input),
+      ensureCalendar: (input) => ensureCalendar(database, input),
       telegram,
       defaultTimezone: config.defaultTimezone,
       logger,
     });
+    await bot.init();
 
     const webhook =
       config.telegram.mode === 'webhook'
@@ -139,7 +142,6 @@ async function main(): Promise<void> {
     process.once('SIGINT', () => void shutdown('SIGINT'));
     process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
-    await bot.init();
     if (config.telegram.mode === 'webhook') {
       if (!config.telegram.webhookUrl || !config.telegram.webhookSecret) {
         throw new Error('Webhook configuration is incomplete');

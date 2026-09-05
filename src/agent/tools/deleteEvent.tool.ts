@@ -11,9 +11,9 @@ export function createDeleteEventTool(database: Kysely<Database>) {
   return defineTool({
     name: 'delete_event',
     description:
-      'Мягко удаляет одно однозначно выбранное active- или completed-событие текущего пользователя и отменяет его pending-напоминания. eventId должен происходить из свежего search_events. Если событие уже недоступно, success=false и состояние не меняется.',
+      'Мягко удаляет одно однозначно выбранное active- или completed-событие текущего календаря и отменяет его pending-напоминания. eventId должен происходить из свежего search_events. Если событие уже недоступно, success=false и состояние не меняется.',
     input: deleteEventInputSchema,
     output: deleteEventOutputSchema,
-    execute: (context, input) => deleteEvent(database, context.userId, input),
+    execute: (context, input) => deleteEvent(database, context.calendarId, input),
   });
 }

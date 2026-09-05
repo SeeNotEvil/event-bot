@@ -19,7 +19,7 @@ export function createSendEventListTool(telegram: TelegramGateway) {
   return defineTool({
     name: 'send_event_list',
     description:
-      'Показывает структурированный список событий и их напоминаний через Telegram Adapter. Имя текущего пользователя добавляется перед названием каждого события автоматически. Передавай events без изменений из свежего результата search_schedule и не добавляй данные самостоятельно. Это terminal interaction tool.',
+      'Показывает структурированный список событий, их авторов и напоминаний через Telegram Adapter. Передавай events без изменений из свежего результата search_schedule и не добавляй данные самостоятельно. Это terminal interaction tool.',
     input: sendEventListInputSchema,
     output: sendEventListOutputSchema,
     terminal: true,
@@ -29,7 +29,6 @@ export function createSendEventListTool(telegram: TelegramGateway) {
         input.title,
         input.events,
         context.now,
-        context.firstName,
       );
       return { success: true as const, transcript };
     },

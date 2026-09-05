@@ -33,7 +33,7 @@ function failure(reason: RescheduleEventFailureReason): RescheduleEventOutput {
 
 export async function rescheduleEvent(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   timezone: string,
   currentDateTime: string,
   rawInput: RescheduleEventInput,
@@ -68,7 +68,7 @@ export async function rescheduleEvent(
       .selectFrom('events')
       .selectAll()
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', '=', 'active')
       .forUpdate()
       .executeTakeFirst();
@@ -139,7 +139,7 @@ export async function rescheduleEvent(
           updated_at: updatedAt,
         })
         .where('id', '=', input.eventId)
-        .where('user_id', '=', userId)
+        .where('calendar_id', '=', calendarId)
         .where('status', '=', 'active')
         .executeTakeFirstOrThrow();
 
@@ -223,7 +223,7 @@ export async function rescheduleEvent(
           .selectFrom('events')
           .selectAll()
           .where('id', '=', input.eventId)
-          .where('user_id', '=', userId)
+          .where('calendar_id', '=', calendarId)
           .executeTakeFirstOrThrow();
     const pendingNotifications = await transaction
       .selectFrom('notifications')

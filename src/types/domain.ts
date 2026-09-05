@@ -3,8 +3,12 @@ import { z } from 'zod';
 
 export type AgentContext = {
   userId: number;
+  calendarId: number;
+  calendarType: CalendarType;
+  calendarTitle: string | null;
   telegramUserId: number;
   telegramChatId: number;
+  telegramChatType: TelegramChatType;
   firstName: string;
   displayName: string;
   telegramUsername: string | null;
@@ -16,11 +20,23 @@ export type AgentContext = {
 export type User = {
   id: number;
   telegramUserId: number;
-  telegramChatId: number;
+  telegramChatId: number | null;
   telegramUsername: string | null;
   firstName: string;
   lastName: string | null;
   displayName: string;
+  timezone: string;
+};
+
+export type CalendarType = 'personal' | 'group';
+export type TelegramChatType = 'private' | 'group' | 'supergroup';
+
+export type Calendar = {
+  id: number;
+  type: CalendarType;
+  userId: number | null;
+  telegramChatId: number | null;
+  title: string | null;
   timezone: string;
 };
 

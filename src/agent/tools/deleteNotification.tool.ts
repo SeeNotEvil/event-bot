@@ -11,9 +11,9 @@ export function createDeleteNotificationTool(database: Kysely<Database>) {
   return defineTool({
     name: 'delete_notification',
     description:
-      'Мягко отменяет одно однозначно выбранное pending-напоминание текущего пользователя. notificationId должен происходить из свежего search_notifications; при нескольких подходящих вариантах сначала требуется уточнение. Sent-напоминание отменить нельзя.',
+      'Мягко отменяет одно однозначно выбранное pending-напоминание текущего календаря. notificationId должен происходить из свежего search_notifications; при нескольких подходящих вариантах сначала требуется уточнение. Sent-напоминание отменить нельзя.',
     input: deleteNotificationInputSchema,
     output: deleteNotificationOutputSchema,
-    execute: (context, input) => deleteNotification(database, context.userId, input),
+    execute: (context, input) => deleteNotification(database, context.calendarId, input),
   });
 }

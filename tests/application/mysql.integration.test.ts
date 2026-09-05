@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ensureCalendar } from '../../src/application/calendars/ensureCalendar.js';
 import { appendMessage, getRecentMessages } from '../../src/application/conversations/conversationHistory.js';
 import { completeEvent } from '../../src/application/events/completeEvent.js';
 import { createEvent } from '../../src/application/events/createEvent.js';
@@ -52,6 +53,11 @@ describeWithMysql('MySQL application actions', () => {
       lastName: null,
       defaultTimezone: 'Europe/Moscow',
     });
+    const ownerCalendar = await ensureCalendar(database, {
+      type: 'personal',
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
 
     try {
       const inputEvents = Array.from({ length: 100 }, (_, index) => ({
@@ -61,7 +67,12 @@ describeWithMysql('MySQL application actions', () => {
         dateTo: index === 99 ? '2035-09-15' : null,
         time: null,
       }));
-      const created = await createEvents(database, owner.id, { events: inputEvents });
+      const created = await createEvents(
+        database,
+        ownerCalendar.id,
+        owner.id,
+        { events: inputEvents },
+      );
 
       expect(created).toMatchObject({
         createdCount: 100,
@@ -79,7 +90,7 @@ describeWithMysql('MySQL application actions', () => {
         .executeTakeFirstOrThrow();
 
       await expect(
-        createEvents(database, owner.id, {
+        createEvents(database, ownerCalendar.id, owner.id, {
           events: [inputEvents[0]!, { ...inputEvents[1]!, title: '' }],
         }),
       ).rejects.toThrow();
@@ -112,6 +123,16 @@ describeWithMysql('MySQL application actions', () => {
       firstName: 'Мария',
       lastName: null,
       defaultTimezone: 'Europe/Moscow',
+    });
+    const firstCalendar = await ensureCalendar(database, {
+      type: 'personal',
+      userId: firstUser.id,
+      timezone: firstUser.timezone,
+    });
+    const secondCalendar = await ensureCalendar(database, {
+      type: 'personal',
+      userId: secondUser.id,
+      timezone: secondUser.timezone,
     });
 
     try {
@@ -152,35 +173,35 @@ describeWithMysql('MySQL application actions', () => {
       await saveUserPreferences(database, firstUser.id, { preferences: null });
       expect(await getUserPreferences(database, firstUser.id)).toBeNull();
 
-      const dentist = await createEvent(database, firstUser.id, {
+      const dentist = await createEvent(database, firstCalendar.id, firstUser.id, {
         title: 'Стоматолог',
         description: 'Плановый осмотр',
         dateFrom: '2035-09-12',
         dateTo: null,
         time: '18:00',
       });
-      const documents = await createEvent(database, firstUser.id, {
+      const documents = await createEvent(database, firstCalendar.id, firstUser.id, {
         title: 'Забрать документы',
         description: null,
         dateFrom: '2035-09-10',
         dateTo: '2035-09-15',
         time: null,
       });
-      const groceries = await createEvent(database, firstUser.id, {
+      const groceries = await createEvent(database, firstCalendar.id, firstUser.id, {
         title: 'Купить продукты',
         description: null,
         dateFrom: '2035-09-16',
         dateTo: null,
         time: '20:00',
       });
-      const foreignEvent = await createEvent(database, secondUser.id, {
+      const foreignEvent = await createEvent(database, secondCalendar.id, secondUser.id, {
         title: 'Стоматолог другого пользователя',
         description: null,
         dateFrom: '2035-09-12',
         dateTo: null,
         time: null,
       });
-      const reschedulable = await createEvent(database, firstUser.id, {
+      const reschedulable = await createEvent(database, firstCalendar.id, firstUser.id, {
         title: 'Учебный курс',
         description: 'С сохранением описания',
         dateFrom: '2035-10-10',
@@ -188,7 +209,7 @@ describeWithMysql('MySQL application actions', () => {
         time: '18:00',
       });
 
-      const textSearch = await searchEvents(database, firstUser.id, {
+      const textSearch = await searchEvents(database, firstCalendar.id, {
         query: 'СТОМАТОЛОГ',
         statuses: ['active'],
         dateFrom: null,
@@ -200,14 +221,14 @@ describeWithMysql('MySQL application actions', () => {
 
       const oldCourseReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: reschedulable.id, remindAt: '2035-10-08T10:00' },
       );
       const secondOldCourseReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: reschedulable.id, remindAt: '2035-10-09T10:00' },
@@ -221,7 +242,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         rescheduleEvent(
           database,
-          secondUser.id,
+          secondCalendar.id,
           secondUser.timezone,
           '2035-09-05T09:00:00+03:00',
           {
@@ -241,7 +262,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         rescheduleEvent(
           database,
-          firstUser.id,
+          firstCalendar.id,
           firstUser.timezone,
           '2035-09-05T09:00:00+03:00',
           {
@@ -258,7 +279,7 @@ describeWithMysql('MySQL application actions', () => {
         reason: 'REMINDER_NOT_IN_FUTURE',
       });
 
-      const courseAfterRejectedMove = await searchEvents(database, firstUser.id, {
+      const courseAfterRejectedMove = await searchEvents(database, firstCalendar.id, {
         query: 'Учебный курс',
         statuses: ['active'],
         dateFrom: null,
@@ -275,7 +296,7 @@ describeWithMysql('MySQL application actions', () => {
       const replacementTimes = ['2035-10-18T10:00', '2035-10-19T10:00'];
       const movedCourse = await rescheduleEvent(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-05T09:00:00+03:00',
         {
@@ -309,7 +330,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const cancelledOldCourseReminders = await searchNotifications(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           eventId: reschedulable.id,
@@ -327,7 +348,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const repeatedCourseMove = await rescheduleEvent(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-05T09:00:00+03:00',
         {
@@ -353,7 +374,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         rescheduleEvent(
           database,
-          firstUser.id,
+          firstCalendar.id,
           firstUser.timezone,
           '2035-09-05T09:00:00+03:00',
           {
@@ -373,7 +394,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const firstReminderResult = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: dentist.id, remindAt: '2035-09-05T10:00' },
@@ -385,7 +406,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const secondReminderResult = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: dentist.id, remindAt: '2035-09-06T10:00' },
@@ -397,7 +418,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const duplicateReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: dentist.id, remindAt: '2035-09-05T10:00' },
@@ -411,7 +432,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         createNotification(
           database,
-          firstUser.id,
+          firstCalendar.id,
           firstUser.timezone,
           '2035-09-04T12:00:00+03:00',
           { eventId: foreignEvent.id, remindAt: '2035-09-05T11:00' },
@@ -421,7 +442,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         createNotification(
           database,
-          firstUser.id,
+          firstCalendar.id,
           firstUser.timezone,
           '2035-09-04T12:00:00+03:00',
           { eventId: dentist.id, remindAt: '2035-09-04T11:59' },
@@ -430,7 +451,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const reminders = await searchNotifications(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           eventId: dentist.id,
@@ -447,7 +468,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const eventsOnDentistDate = await searchSchedule(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           query: null,
@@ -477,7 +498,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const remindersOnSeptemberSixth = await searchSchedule(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           query: null,
@@ -505,7 +526,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const allActiveSchedule = await searchSchedule(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           query: null,
@@ -525,13 +546,13 @@ describeWithMysql('MySQL application actions', () => {
       expect(allActiveSchedule.events.some((event) => event.id === foreignEvent.id)).toBe(false);
 
       await expect(
-        deleteNotification(database, secondUser.id, {
+        deleteNotification(database, secondCalendar.id, {
           notificationId: secondReminderResult.notification.id,
         }),
       ).resolves.toMatchObject({ success: false, reason: 'NOT_FOUND_OR_NOT_PENDING' });
 
       await expect(
-        deleteNotification(database, firstUser.id, {
+        deleteNotification(database, firstCalendar.id, {
           notificationId: secondReminderResult.notification.id,
         }),
       ).resolves.toMatchObject({
@@ -541,7 +562,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const reactivatedReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: dentist.id, remindAt: '2035-09-06T10:00' },
@@ -595,7 +616,7 @@ describeWithMysql('MySQL application actions', () => {
           notificationId: firstReminderResult.notification.id,
           eventId: dentist.id,
           telegramChatId: existingUser.telegramChatId,
-          firstName: 'Иван',
+          createdByName: 'Иван',
           timezone: 'Europe/Moscow',
         }),
       );
@@ -610,12 +631,12 @@ describeWithMysql('MySQL application actions', () => {
         }),
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
       await expect(
-        deleteNotification(database, firstUser.id, {
+        deleteNotification(database, firstCalendar.id, {
           notificationId: firstReminderResult.notification.id,
         }),
       ).resolves.toMatchObject({ success: false, reason: 'NOT_FOUND_OR_NOT_PENDING' });
 
-      const overlap = await searchEvents(database, firstUser.id, {
+      const overlap = await searchEvents(database, firstCalendar.id, {
         query: null,
         statuses: ['active'],
         dateFrom: '2035-09-14',
@@ -624,19 +645,19 @@ describeWithMysql('MySQL application actions', () => {
       });
       expect(overlap.events.map((event) => event.title)).toEqual(['Забрать документы']);
 
-      expect(await deleteEvent(database, secondUser.id, { eventId: dentist.id })).toEqual({
+      expect(await deleteEvent(database, secondCalendar.id, { eventId: dentist.id })).toEqual({
         success: false,
         event: null,
         reason: 'NOT_FOUND_OR_INACTIVE',
       });
-      expect(await deleteEvent(database, firstUser.id, { eventId: dentist.id })).toMatchObject({
+      expect(await deleteEvent(database, firstCalendar.id, { eventId: dentist.id })).toMatchObject({
         success: true,
         event: { id: dentist.id, status: 'deleted' },
       });
 
       const cancelledByEventDeletion = await searchNotifications(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           eventId: dentist.id,
@@ -649,20 +670,20 @@ describeWithMysql('MySQL application actions', () => {
       expect(cancelledByEventDeletion.notifications.map((notification) => notification.id)).toContain(
         secondReminderResult.notification.id,
       );
-      expect(await deleteEvent(database, firstUser.id, { eventId: dentist.id })).toMatchObject({
+      expect(await deleteEvent(database, firstCalendar.id, { eventId: dentist.id })).toMatchObject({
         success: false,
       });
 
       const documentsReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: documents.id, remindAt: '2035-09-09T10:00' },
       );
       const groceriesReminder = await createNotification(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         '2035-09-04T12:00:00+03:00',
         { eventId: groceries.id, remindAt: '2035-09-15T10:00' },
@@ -671,7 +692,7 @@ describeWithMysql('MySQL application actions', () => {
       expect(groceriesReminder.success).toBe(true);
 
       expect(
-        await deleteEvents(database, firstUser.id, {
+        await deleteEvents(database, firstCalendar.id, {
           eventIds: [documents.id, foreignEvent.id],
         }),
       ).toEqual({
@@ -682,7 +703,7 @@ describeWithMysql('MySQL application actions', () => {
         missingEventIds: [foreignEvent.id],
       });
 
-      const documentsAfterFailedBatch = await searchEvents(database, firstUser.id, {
+      const documentsAfterFailedBatch = await searchEvents(database, firstCalendar.id, {
         query: 'Забрать документы',
         statuses: ['active'],
         dateFrom: null,
@@ -693,7 +714,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const documentReminderAfterFailedBatch = await searchNotifications(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           eventId: documents.id,
@@ -706,7 +727,7 @@ describeWithMysql('MySQL application actions', () => {
       expect(documentReminderAfterFailedBatch.notifications).toHaveLength(1);
 
       expect(
-        await deleteEvents(database, firstUser.id, {
+        await deleteEvents(database, firstCalendar.id, {
           eventIds: [groceries.id, documents.id],
         }),
       ).toEqual({
@@ -720,7 +741,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const cancelledByBulkDeletion = await searchNotifications(
         database,
-        firstUser.id,
+        firstCalendar.id,
         firstUser.timezone,
         {
           eventId: null,
@@ -741,7 +762,7 @@ describeWithMysql('MySQL application actions', () => {
       }
 
       expect(
-        await deleteEvents(database, firstUser.id, {
+        await deleteEvents(database, firstCalendar.id, {
           eventIds: [groceries.id, documents.id],
         }),
       ).toMatchObject({
@@ -750,7 +771,7 @@ describeWithMysql('MySQL application actions', () => {
         missingEventIds: [groceries.id, documents.id],
       });
 
-      const foreignStillActive = await searchEvents(database, secondUser.id, {
+      const foreignStillActive = await searchEvents(database, secondCalendar.id, {
         query: null,
         statuses: ['active'],
         dateFrom: null,
@@ -762,12 +783,13 @@ describeWithMysql('MySQL application actions', () => {
       for (let index = 0; index < 55; index += 1) {
         await appendMessage(
           database,
+          firstCalendar.id,
           firstUser.id,
           { role: index % 2 === 0 ? 'user' : 'assistant', content: `message-${index}` },
           50,
         );
       }
-      const history = await getRecentMessages(database, firstUser.id, 50);
+      const history = await getRecentMessages(database, firstCalendar.id, 50);
       expect(history).toHaveLength(50);
       expect(history[0]?.content).toBe('message-5');
       expect(history[49]?.content).toBe('message-54');
@@ -794,9 +816,19 @@ describeWithMysql('MySQL application actions', () => {
       lastName: null,
       defaultTimezone: 'Europe/Moscow',
     });
+    const ownerCalendar = await ensureCalendar(database, {
+      type: 'personal',
+      userId: owner.id,
+      timezone: owner.timezone,
+    });
+    const otherCalendar = await ensureCalendar(database, {
+      type: 'personal',
+      userId: otherUser.id,
+      timezone: otherUser.timezone,
+    });
 
     try {
-      const event = await createEvent(database, owner.id, {
+      const event = await createEvent(database, ownerCalendar.id, owner.id, {
         title: 'Подготовить отчёт',
         description: null,
         dateFrom: '2036-01-10',
@@ -807,14 +839,14 @@ describeWithMysql('MySQL application actions', () => {
 
       const pendingReminder = await createNotification(
         database,
-        owner.id,
+        ownerCalendar.id,
         owner.timezone,
         '2035-12-01T10:00:00+03:00',
         { eventId: event.id, remindAt: '2036-01-09T09:00' },
       );
       const sentReminder = await createNotification(
         database,
-        owner.id,
+        ownerCalendar.id,
         owner.timezone,
         '2035-12-01T10:00:00+03:00',
         { eventId: event.id, remindAt: '2036-01-08T09:00' },
@@ -836,7 +868,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         completeEvent(
           database,
-          otherUser.id,
+          otherCalendar.id,
           { eventId: event.id },
           new Date('2035-12-20T12:34:56.789Z'),
         ),
@@ -850,7 +882,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const completed = await completeEvent(
         database,
-        owner.id,
+        ownerCalendar.id,
         { eventId: event.id },
         new Date('2035-12-20T12:34:56.789Z'),
       );
@@ -869,7 +901,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         completeEvent(
           database,
-          owner.id,
+          ownerCalendar.id,
           { eventId: event.id },
           new Date('2035-12-21T00:00:00.000Z'),
         ),
@@ -882,7 +914,7 @@ describeWithMysql('MySQL application actions', () => {
 
       const remindersAfterCompletion = await searchNotifications(
         database,
-        owner.id,
+        ownerCalendar.id,
         owner.timezone,
         {
           eventId: event.id,
@@ -917,7 +949,7 @@ describeWithMysql('MySQL application actions', () => {
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
       expect(send).not.toHaveBeenCalled();
 
-      const activeSearch = await searchEvents(database, owner.id, {
+      const activeSearch = await searchEvents(database, ownerCalendar.id, {
         query: 'отчёт',
         statuses: ['active'],
         dateFrom: null,
@@ -926,7 +958,7 @@ describeWithMysql('MySQL application actions', () => {
       });
       expect(activeSearch.events).toEqual([]);
 
-      const completedSchedule = await searchSchedule(database, owner.id, owner.timezone, {
+      const completedSchedule = await searchSchedule(database, ownerCalendar.id, owner.timezone, {
         query: 'отчёт',
         eventStatuses: ['completed'],
         eventDateFrom: null,
@@ -946,7 +978,7 @@ describeWithMysql('MySQL application actions', () => {
         },
       ]);
 
-      const defaultSchedule = await searchSchedule(database, owner.id, owner.timezone, {
+      const defaultSchedule = await searchSchedule(database, ownerCalendar.id, owner.timezone, {
         query: 'отчёт',
         eventStatuses: null,
         eventDateFrom: null,
@@ -962,7 +994,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         createNotification(
           database,
-          owner.id,
+          ownerCalendar.id,
           owner.timezone,
           '2035-12-21T00:00:00+03:00',
           { eventId: event.id, remindAt: '2036-01-09T12:00' },
@@ -971,7 +1003,7 @@ describeWithMysql('MySQL application actions', () => {
       await expect(
         rescheduleEvent(
           database,
-          owner.id,
+          ownerCalendar.id,
           owner.timezone,
           '2035-12-21T00:00:00+03:00',
           {
@@ -987,11 +1019,11 @@ describeWithMysql('MySQL application actions', () => {
         reason: 'EVENT_NOT_FOUND_OR_INACTIVE',
       });
 
-      expect(await deleteEvent(database, owner.id, { eventId: event.id })).toMatchObject({
+      expect(await deleteEvent(database, ownerCalendar.id, { eventId: event.id })).toMatchObject({
         success: true,
         event: { id: event.id, status: 'deleted' },
       });
-      const deletedSearch = await searchEvents(database, owner.id, {
+      const deletedSearch = await searchEvents(database, ownerCalendar.id, {
         query: 'отчёт',
         statuses: ['deleted'],
         dateFrom: null,
@@ -1003,19 +1035,19 @@ describeWithMysql('MySQL application actions', () => {
         status: 'deleted',
         completedAt: '2035-12-20T12:34:56.789Z',
       });
-      await expect(completeEvent(database, owner.id, { eventId: event.id })).resolves.toMatchObject({
+      await expect(completeEvent(database, ownerCalendar.id, { eventId: event.id })).resolves.toMatchObject({
         success: false,
         reason: 'EVENT_NOT_FOUND_OR_NOT_COMPLETABLE',
       });
 
-      const activeForBulk = await createEvent(database, owner.id, {
+      const activeForBulk = await createEvent(database, ownerCalendar.id, owner.id, {
         title: 'Активное для удаления',
         description: null,
         dateFrom: '2036-02-01',
         dateTo: null,
         time: null,
       });
-      const completedForBulk = await createEvent(database, owner.id, {
+      const completedForBulk = await createEvent(database, ownerCalendar.id, owner.id, {
         title: 'Выполненное для удаления',
         description: null,
         dateFrom: '2036-02-02',
@@ -1024,17 +1056,165 @@ describeWithMysql('MySQL application actions', () => {
       });
       await completeEvent(
         database,
-        owner.id,
+        ownerCalendar.id,
         { eventId: completedForBulk.id },
         new Date('2035-12-22T00:00:00.000Z'),
       );
       await expect(
-        deleteEvents(database, owner.id, {
+        deleteEvents(database, ownerCalendar.id, {
           eventIds: [activeForBulk.id, completedForBulk.id],
         }),
       ).resolves.toMatchObject({ success: true, deletedCount: 2 });
     } finally {
       await database.deleteFrom('users').where('id', 'in', [owner.id, otherUser.id]).execute();
+    }
+  });
+
+  it('shares group events, history, and reminder delivery without replacing private chats', async () => {
+    const unique = Date.now() + 20_000;
+    const groupChatId = -unique;
+    const firstUser = await ensureUser(database, {
+      telegramUserId: unique,
+      telegramChatId: unique,
+      telegramUsername: `group_owner_${unique}`,
+      firstName: 'Иван',
+      lastName: null,
+      defaultTimezone: 'Europe/Moscow',
+    });
+    const secondUser = await ensureUser(database, {
+      telegramUserId: unique + 1,
+      telegramChatId: null,
+      telegramUsername: `group_member_${unique}`,
+      firstName: 'Ксюша',
+      lastName: null,
+      defaultTimezone: 'Europe/Moscow',
+    });
+    const groupCalendar = await ensureCalendar(database, {
+      type: 'group',
+      telegramChatId: groupChatId,
+      title: 'Общий чат',
+      timezone: 'Europe/Moscow',
+    });
+    const otherGroupCalendar = await ensureCalendar(database, {
+      type: 'group',
+      telegramChatId: groupChatId - 1,
+      title: 'Другой чат',
+      timezone: 'Europe/Moscow',
+    });
+
+    try {
+      const userAfterGroupMessage = await ensureUser(database, {
+        telegramUserId: unique,
+        telegramChatId: null,
+        telegramUsername: `group_owner_${unique}`,
+        firstName: 'Иван',
+        lastName: null,
+        defaultTimezone: 'Europe/Moscow',
+      });
+      expect(userAfterGroupMessage.telegramChatId).toBe(unique);
+
+      const sameCalendar = await ensureCalendar(database, {
+        type: 'group',
+        telegramChatId: groupChatId,
+        title: 'Общий чат — новое название',
+        timezone: 'UTC',
+      });
+      expect(sameCalendar).toMatchObject({
+        id: groupCalendar.id,
+        title: 'Общий чат — новое название',
+        timezone: 'Europe/Moscow',
+      });
+
+      const event = await createEvent(database, groupCalendar.id, firstUser.id, {
+        title: 'Общая встреча',
+        description: null,
+        dateFrom: '2037-03-12',
+        dateTo: null,
+        time: '19:00',
+      });
+      const sharedSearch = await searchSchedule(
+        database,
+        groupCalendar.id,
+        groupCalendar.timezone,
+        {
+          query: null,
+          eventStatuses: ['active'],
+          eventDateFrom: null,
+          eventDateTo: null,
+          reminderStatuses: ['pending'],
+          reminderFrom: null,
+          reminderTo: null,
+          requireReminder: false,
+          limit: null,
+        },
+      );
+      expect(sharedSearch.events).toMatchObject([
+        { id: event.id, title: 'Общая встреча', createdByName: 'Иван' },
+      ]);
+      await expect(
+        searchEvents(database, otherGroupCalendar.id, {
+          query: null,
+          statuses: ['active'],
+          dateFrom: null,
+          dateTo: null,
+          limit: null,
+        }),
+      ).resolves.toEqual({ events: [] });
+
+      await appendMessage(
+        database,
+        groupCalendar.id,
+        firstUser.id,
+        { role: 'user', content: 'Иван: добавь встречу' },
+        50,
+      );
+      await appendMessage(
+        database,
+        groupCalendar.id,
+        secondUser.id,
+        { role: 'user', content: 'Ксюша: перенеси её' },
+        50,
+      );
+      expect(await getRecentMessages(database, groupCalendar.id, 50)).toEqual([
+        { role: 'user', content: 'Иван: добавь встречу' },
+        { role: 'user', content: 'Ксюша: перенеси её' },
+      ]);
+
+      const reminder = await createNotification(
+        database,
+        groupCalendar.id,
+        groupCalendar.timezone,
+        '2037-03-10T09:00:00+03:00',
+        { eventId: event.id, remindAt: '2037-03-11T10:00' },
+      );
+      if (!reminder.success) {
+        throw new Error('Expected the group reminder to be created');
+      }
+
+      const send = vi.fn(async () => undefined);
+      await processDueNotifications(database, {
+        now: new Date('2037-03-11T07:01:00.000Z'),
+        batchSize: 10,
+        lockTimeoutMs: 60_000,
+        notificationIds: [reminder.notification.id],
+        send,
+      });
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: event.id,
+          telegramChatId: groupChatId,
+          createdByName: 'Иван',
+        }),
+      );
+    } finally {
+      await database
+        .deleteFrom('calendars')
+        .where('id', 'in', [groupCalendar.id, otherGroupCalendar.id])
+        .execute();
+      await database
+        .deleteFrom('users')
+        .where('id', 'in', [firstUser.id, secondUser.id])
+        .execute();
     }
   });
 });

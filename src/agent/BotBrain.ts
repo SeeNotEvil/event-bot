@@ -7,7 +7,12 @@ import {
 } from '../application/conversations/conversationHistory.js';
 import { getUserPreferences } from '../application/users/userPreferences.js';
 import type { Database } from '../db/types.js';
-import type { AgentContext, User } from '../types/domain.js';
+import type {
+  AgentContext,
+  Calendar,
+  TelegramChatType,
+  User,
+} from '../types/domain.js';
 import type { AgentRuntime, AgentRunResult } from './AgentRuntime.js';
 
 export type Clock = () => DateTime;
@@ -21,38 +26,53 @@ export class BotBrain {
     private readonly clock: Clock = () => DateTime.now(),
   ) {}
 
-  public async handleMessage(message: string, user: User): Promise<AgentRunResult> {
+  public async handleMessage(
+    message: string,
+    user: User,
+    calendar: Calendar,
+    telegramChatId: number,
+    telegramChatType: TelegramChatType,
+  ): Promise<AgentRunResult> {
     const [history, userPreferences] = await Promise.all([
-      getRecentMessages(this.database, user.id, this.historyLimit),
+      getRecentMessages(this.database, calendar.id, this.historyLimit),
       getUserPreferences(this.database, user.id),
     ]);
+    const messageForModel = calendar.type === 'group'
+      ? `${user.displayName}: ${message}`
+      : message;
     await appendMessage(
       this.database,
+      calendar.id,
       user.id,
-      { role: 'user', content: message },
+      { role: 'user', content: messageForModel },
       this.historyLimit,
     );
 
-    const now = this.clock().setZone(user.timezone);
+    const now = this.clock().setZone(calendar.timezone);
     if (!now.isValid) {
       throw new Error(`Invalid timezone for user ${user.id}`);
     }
 
     const context: AgentContext = {
       userId: user.id,
+      calendarId: calendar.id,
+      calendarType: calendar.type,
+      calendarTitle: calendar.title,
       telegramUserId: user.telegramUserId,
-      telegramChatId: user.telegramChatId,
+      telegramChatId,
+      telegramChatType,
       firstName: user.firstName,
       displayName: user.displayName,
       telegramUsername: user.telegramUsername,
       userPreferences,
-      timezone: user.timezone,
+      timezone: calendar.timezone,
       now: now.toISO({ suppressMilliseconds: true }) ?? now.toISO(),
     };
 
-    const result = await this.runtime.run(message, history, context);
+    const result = await this.runtime.run(messageForModel, history, context);
     await appendMessage(
       this.database,
+      calendar.id,
       user.id,
       { role: 'assistant', content: result.transcript },
       this.historyLimit,
@@ -61,6 +81,7 @@ export class BotBrain {
     this.logger.info(
       {
         userId: user.id,
+        calendarId: calendar.id,
         steps: result.steps,
         terminalTool: result.terminalTool,
       },

@@ -5,7 +5,7 @@ import type { User } from '../../types/domain.js';
 
 const ensureUserInputSchema = z.object({
   telegramUserId: z.number().int().positive().safe(),
-  telegramChatId: z.number().int().positive().safe(),
+  telegramChatId: z.number().int().positive().safe().nullable(),
   telegramUsername: z.string().trim().min(1).max(255).nullable(),
   firstName: z.string().trim().min(1).max(255),
   lastName: z.string().trim().min(1).max(255).nullable(),
@@ -18,6 +18,16 @@ export async function ensureUser(database: Kysely<Database>, rawInput: EnsureUse
   const input = ensureUserInputSchema.parse(rawInput);
   const now = new Date();
 
+  const profileUpdate = {
+    telegram_username: input.telegramUsername,
+    first_name: input.firstName,
+    last_name: input.lastName,
+    updated_at: now,
+    ...(input.telegramChatId === null
+      ? {}
+      : { telegram_chat_id: input.telegramChatId }),
+  };
+
   await database
     .insertInto('users')
     .values({
@@ -29,13 +39,7 @@ export async function ensureUser(database: Kysely<Database>, rawInput: EnsureUse
       timezone: input.defaultTimezone,
       updated_at: now,
     })
-    .onDuplicateKeyUpdate({
-      telegram_chat_id: input.telegramChatId,
-      telegram_username: input.telegramUsername,
-      first_name: input.firstName,
-      last_name: input.lastName,
-      updated_at: now,
-    })
+    .onDuplicateKeyUpdate(profileUpdate)
     .execute();
 
   const row = await database

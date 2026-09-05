@@ -11,10 +11,10 @@ export function createSearchScheduleTool(database: Kysely<Database>) {
   return defineTool({
     name: 'search_schedule',
     description:
-      'Универсальный read-only поиск для ответа о расписании: возвращает события текущего пользователя с подходящими напоминаниями. Фильтры событий и напоминаний независимы; диапазон события проверяет пересечение дат. requireReminder=false сохраняет события без совпавших напоминаний, true оставляет только события с ними. Null statuses означают active-события и pending-напоминания; completed нужно запросить явно. Результат подходит для send_event_list, но его id нельзя использовать для последующего изменения без свежего специализированного поиска.',
+      'Универсальный read-only поиск для ответа о расписании: возвращает события текущего календаря с авторами и подходящими напоминаниями. В группе это общий календарь группы. Фильтры событий и напоминаний независимы; диапазон события проверяет пересечение дат. requireReminder=false сохраняет события без совпавших напоминаний, true оставляет только события с ними. Null statuses означают active-события и pending-напоминания; completed нужно запросить явно. Результат подходит для send_event_list, но его id нельзя использовать для последующего изменения без свежего специализированного поиска.',
     input: searchScheduleInputSchema,
     output: searchScheduleOutputSchema,
     execute: (context, input) =>
-      searchSchedule(database, context.userId, context.timezone, input),
+      searchSchedule(database, context.calendarId, context.timezone, input),
   });
 }

@@ -21,6 +21,7 @@ describe('TelegramAdapter formatting', () => {
           time: '18:00',
           status: 'active',
           completedAt: null,
+          createdByName: 'Ксюша',
           notifications: [
             {
               id: 10,
@@ -37,6 +38,7 @@ describe('TelegramAdapter formatting', () => {
           time: null,
           status: 'active',
           completedAt: null,
+          createdByName: 'Ксюша',
           notifications: [],
         },
         {
@@ -47,11 +49,11 @@ describe('TelegramAdapter formatting', () => {
           time: null,
           status: 'active',
           completedAt: null,
+          createdByName: 'Ксюша',
           notifications: [],
         },
       ],
       '2026-09-04T21:30:00+03:00',
-      'Ксюша',
     );
 
     expect(chunks).toHaveLength(1);
@@ -63,7 +65,7 @@ describe('TelegramAdapter formatting', () => {
 
   it('renders an empty state', () => {
     expect(
-      formatEventList('Мои события', [], '2026-09-04T21:30:00+03:00', 'Ксюша'),
+      formatEventList('Мои события', [], '2026-09-04T21:30:00+03:00'),
     ).toEqual(['Мои события\n\nСобытий нет.']);
   });
 
@@ -79,11 +81,11 @@ describe('TelegramAdapter formatting', () => {
           time: null,
           status: 'active',
           completedAt: null,
+          createdByName: '  Ксюша\n  Анна  ',
           notifications: [],
         },
       ],
       '2026-09-04T21:30:00+03:00',
-      '  Ксюша\n  Анна  ',
     );
 
     expect(message).toContain('Ксюша Анна — Стоматолог');
@@ -126,11 +128,11 @@ describe('TelegramAdapter formatting', () => {
           time: '18:00',
           status: 'active',
           completedAt: null,
+          createdByName: 'Ксюша',
           notifications,
         },
       ],
       '2026-09-04T21:30:00+03:00',
-      'Ксюша',
     );
 
     expect(chunks.length).toBeGreaterThan(1);
@@ -153,6 +155,7 @@ describe('TelegramAdapter formatting', () => {
       time: null,
       status: 'active' as const,
       completedAt: null,
+      createdByName: 'Ксюша',
       notifications: [],
     }));
 
@@ -161,7 +164,6 @@ describe('TelegramAdapter formatting', () => {
       'События',
       events,
       '2026-09-04T21:30:00+03:00',
-      'Ксюша',
     );
 
     expect(sendMessage.mock.calls.length).toBeGreaterThan(1);
@@ -183,11 +185,11 @@ describe('TelegramAdapter formatting', () => {
           time: '18:00',
           status: 'completed',
           completedAt: '2026-09-12T16:00:00.000Z',
+          createdByName: 'Ксюша',
           notifications: [],
         },
       ],
       '2026-09-04T21:30:00+03:00',
-      'Ксюша',
     );
 
     expect(message).toBeDefined();
@@ -220,11 +222,11 @@ describe('TelegramAdapter formatting', () => {
           time: null,
           status: 'completed',
           completedAt: '2026-09-12T16:00:00.000Z',
+          createdByName: 'Ксюша',
           notifications: [],
         },
       ],
       '2026-09-04T21:30:00+03:00',
-      'Ксюша',
     );
 
     expect(sendMessage).toHaveBeenCalledWith(

@@ -11,9 +11,9 @@ export function createSearchEventsTool(database: Kysely<Database>) {
   return defineTool({
     name: 'search_events',
     description:
-      'Ищет актуальные события текущего пользователя по тексту, статусам и пересечению включительного диапазона дат; ближайшие возвращаются первыми. Это источник eventId для изменения, завершения, переноса, удаления и работы с напоминаниями. Используй statuses, соответствующие запросу: обычно active; completed добавляй только когда пользователь имеет в виду выполненные.',
+      'Ищет актуальные события текущего календаря по тексту, статусам и пересечению включительного диапазона дат; ближайшие возвращаются первыми. В группе поиск охватывает общий календарь группы, а не личный календарь говорящего. Это источник eventId для изменения, завершения, переноса, удаления и работы с напоминаниями. Используй statuses, соответствующие запросу: обычно active; completed добавляй только когда пользователь имеет в виду выполненные.',
     input: searchEventsInputSchema,
     output: searchEventsOutputSchema,
-    execute: (context, input) => searchEvents(database, context.userId, input),
+    execute: (context, input) => searchEvents(database, context.calendarId, input),
   });
 }

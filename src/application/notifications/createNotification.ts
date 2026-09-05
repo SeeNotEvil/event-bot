@@ -15,7 +15,7 @@ import {
 
 export async function createNotification(
   database: Kysely<Database>,
-  userId: number,
+  calendarId: number,
   timezone: string,
   currentDateTime: string,
   rawInput: CreateNotificationInput,
@@ -49,7 +49,7 @@ export async function createNotification(
       .selectFrom('events')
       .select(['id', 'title'])
       .where('id', '=', input.eventId)
-      .where('user_id', '=', userId)
+      .where('calendar_id', '=', calendarId)
       .where('status', '=', 'active')
       .forUpdate()
       .executeTakeFirst();

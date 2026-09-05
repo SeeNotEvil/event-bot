@@ -23,8 +23,12 @@ import { silentLogger } from '../helpers.js';
 
 const context: AgentContext = {
   userId: 14,
+  calendarId: 7,
+  calendarType: 'personal',
+  calendarTitle: null,
   telegramUserId: 123,
   telegramChatId: 123,
+  telegramChatType: 'private',
   firstName: 'Иван',
   displayName: 'Иван Петров',
   telegramUsername: 'ivan_petrov',
@@ -192,7 +196,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     expect(JSON.stringify(specs[10]?.parameters)).toContain('"maxLength":4000');
   });
 
-  it('passes the trusted Telegram first name to the event-list adapter', async () => {
+  it('passes event authors from schedule data to the event-list adapter', async () => {
     const sendEventList = vi.fn(async () => 'События\n\n12 сентября\nИван — Стоматолог');
     const telegram: TelegramGateway = {
       sendMessage: vi.fn(async (_chatId: number, text: string) => text),
@@ -212,6 +216,7 @@ describe('ToolRegistry and ToolRuntime', () => {
         time: null,
         status: 'active' as const,
         completedAt: null,
+        createdByName: 'Иван',
         notifications: [],
       },
     ];
@@ -224,7 +229,6 @@ describe('ToolRegistry and ToolRuntime', () => {
       'События',
       events,
       context.now,
-      'Иван',
     );
   });
 });

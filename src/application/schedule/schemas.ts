@@ -42,6 +42,7 @@ export const searchScheduleInputSchema = z
 export type SearchScheduleInput = z.infer<typeof searchScheduleInputSchema>;
 
 export const scheduleEventSchema = eventSchema.extend({
+  createdByName: z.string().trim().min(1).max(255),
   notifications: z.array(notificationSchema),
 });
 
