@@ -139,8 +139,9 @@ async function main(): Promise<void> {
       await database.destroy();
     };
 
-    process.once('SIGINT', () => void shutdown('SIGINT'));
-    process.once('SIGTERM', () => void shutdown('SIGTERM'));
+    // The process manager can repeat a signal while the other process exits.
+    process.on('SIGINT', () => void shutdown('SIGINT'));
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
     if (config.telegram.mode === 'webhook') {
       if (!config.telegram.webhookUrl || !config.telegram.webhookSecret) {

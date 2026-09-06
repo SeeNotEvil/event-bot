@@ -3,12 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
 import { Api } from 'grammy';
+import OpenAI from 'openai';
+import { ReminderTextGenerator } from './agent/ReminderTextGenerator.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
 import { createLogger } from './logger.js';
-import { TelegramAdapter } from './telegram/TelegramAdapter.js';
+import { formatEventReminder, TelegramAdapter } from './telegram/TelegramAdapter.js';
 
 async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
@@ -32,17 +34,34 @@ export async function runNotificationWorker(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
   const database = createDatabase(config.database);
-  const telegram = new TelegramAdapter(new Api(config.telegram.token));
+  const requestTimeoutMs = Math.min(10_000, Math.floor(config.notificationWorker.lockTimeoutMs / 3));
+  const telegram = new TelegramAdapter(new Api(config.telegram.token, {
+    timeoutSeconds: requestTimeoutMs / 1000,
+  }));
+  const openai = new OpenAI({
+    apiKey: config.openai.apiKey,
+    timeout: Math.min(config.openai.timeoutMs, requestTimeoutMs),
+    maxRetries: 0,
+  });
+  const reminderTextGenerator = new ReminderTextGenerator(
+    openai.responses,
+    config.openai.model,
+    config.openai.maxOutputTokens,
+  );
   const abortController = new AbortController();
   const stop = (signal: NodeJS.Signals): void => {
+    if (abortController.signal.aborted) {
+      return;
+    }
     logger.info({ signal }, 'Stopping notification worker');
     abortController.abort();
   };
   const onSigint = (): void => stop('SIGINT');
   const onSigterm = (): void => stop('SIGTERM');
 
-  process.once('SIGINT', onSigint);
-  process.once('SIGTERM', onSigterm);
+  // Repeated signals must not interrupt an in-flight delivery or database cleanup.
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
 
   try {
     await migrateToLatest(database);
@@ -63,22 +82,36 @@ export async function runNotificationWorker(): Promise<void> {
           now,
           batchSize: config.notificationWorker.batchSize,
           lockTimeoutMs: config.notificationWorker.lockTimeoutMs,
-          send: async (notification) => {
-            const localNow = DateTime.fromJSDate(now, { zone: 'utc' }).setZone(
-              notification.timezone,
-            );
-            await telegram.sendEventReminder(
-              notification.telegramChatId,
-              {
-                id: notification.eventId,
-                title: notification.eventTitle,
-                dateFrom: notification.eventDateFrom,
-                dateTo: notification.eventDateTo,
-                time: notification.eventTime,
-              },
-              localNow.toISO({ suppressMilliseconds: true }) ?? now.toISOString(),
-              notification.createdByName,
-            );
+          signal: abortController.signal,
+          prepareMessage: async (notification) => {
+            const localNow = DateTime.now().setZone(notification.timezone).toISO({
+              suppressMilliseconds: true,
+            }) ?? new Date().toISOString();
+            try {
+              return await reminderTextGenerator.generate(notification, localNow);
+            } catch (error) {
+              logger.warn(
+                {
+                  notificationId: notification.notificationId,
+                  errorType: error instanceof Error ? error.name : 'UnknownError',
+                },
+                'Reminder generation failed; using standard reminder',
+              );
+              return formatEventReminder(
+                {
+                  id: notification.eventId,
+                  title: notification.eventTitle,
+                  dateFrom: notification.eventDateFrom,
+                  dateTo: notification.eventDateTo,
+                  time: notification.eventTime,
+                },
+                localNow,
+                notification.createdByName,
+              );
+            }
+          },
+          send: async (notification, message) => {
+            await telegram.sendMessage(notification.telegramChatId, message);
           },
         });
 

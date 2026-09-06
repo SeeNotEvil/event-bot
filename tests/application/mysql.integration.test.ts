@@ -551,14 +551,29 @@ describeWithMysql('MySQL application actions', () => {
         }),
       ).resolves.toMatchObject({ success: false, reason: 'NOT_FOUND_OR_NOT_PENDING' });
 
+      const cancelledDelivery = vi.fn(async () => undefined);
       await expect(
-        deleteNotification(database, firstCalendar.id, {
-          notificationId: secondReminderResult.notification.id,
+        processDueNotifications(database, {
+          now: new Date('2035-09-06T07:30:00.000Z'),
+          batchSize: 10,
+          lockTimeoutMs: 60_000,
+          notificationIds: [secondReminderResult.notification.id],
+          prepareMessage: async () => {
+            // The user cancels while the model is composing the reminder.
+            await expect(
+              deleteNotification(database, firstCalendar.id, {
+                notificationId: secondReminderResult.notification.id,
+              }),
+            ).resolves.toMatchObject({
+              success: true,
+              notification: { status: 'cancelled' },
+            });
+            return 'Prepared reminder';
+          },
+          send: cancelledDelivery,
         }),
-      ).resolves.toMatchObject({
-        success: true,
-        notification: { status: 'cancelled' },
-      });
+      ).resolves.toEqual({ claimed: 1, sent: 0, failed: 0, skipped: 1 });
+      expect(cancelledDelivery).not.toHaveBeenCalled();
 
       const reactivatedReminder = await createNotification(
         database,
@@ -579,15 +594,19 @@ describeWithMysql('MySQL application actions', () => {
       const failedDelivery = vi.fn(async () => {
         throw new Error('Temporary Telegram failure');
       });
+      const prepareMessage = vi.fn(async () => 'Prepared reminder');
       await expect(
         processDueNotifications(database, {
           now: new Date('2035-09-05T07:30:00.000Z'),
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
+          prepareMessage,
           send: failedDelivery,
         }),
       ).resolves.toEqual({ claimed: 1, sent: 0, failed: 1, skipped: 0 });
+      expect(prepareMessage).toHaveBeenCalledTimes(1);
+      expect(failedDelivery).toHaveBeenCalledTimes(1);
 
       const failedRow = await database
         .selectFrom('notifications')
@@ -608,6 +627,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
+          prepareMessage,
           send: delivered,
         }),
       ).resolves.toEqual({ claimed: 1, sent: 1, failed: 0, skipped: 0 });
@@ -618,7 +638,10 @@ describeWithMysql('MySQL application actions', () => {
           telegramChatId: existingUser.telegramChatId,
           createdByName: 'Иван',
           timezone: 'Europe/Moscow',
+          calendarType: 'personal',
+          recipientFirstName: 'Иван',
         }),
+        'Prepared reminder',
       );
 
       await expect(
@@ -627,6 +650,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
+          prepareMessage,
           send: delivered,
         }),
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
@@ -944,6 +968,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [pendingReminder.notification.id],
+          prepareMessage: async () => 'Prepared reminder',
           send,
         }),
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
@@ -1197,6 +1222,7 @@ describeWithMysql('MySQL application actions', () => {
         batchSize: 10,
         lockTimeoutMs: 60_000,
         notificationIds: [reminder.notification.id],
+        prepareMessage: async () => 'Prepared reminder',
         send,
       });
       expect(send).toHaveBeenCalledWith(
@@ -1204,7 +1230,11 @@ describeWithMysql('MySQL application actions', () => {
           eventId: event.id,
           telegramChatId: groupChatId,
           createdByName: 'Иван',
+          calendarType: 'group',
+          recipientFirstName: null,
+          recipientPreferences: null,
         }),
+        'Prepared reminder',
       );
     } finally {
       await database

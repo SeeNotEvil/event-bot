@@ -22,23 +22,7 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
-
-  worker:
-    build:
-      context: .
-      target: development
-    command: npm run worker:dev
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      MYSQL_HOST: mysql
-    volumes:
-      - ./src:/app/src
-    depends_on:
-      app:
-        condition: service_healthy
-    restart: unless-stopped
+    stop_grace_period: 30s
 
   mysql:
     image: mysql:8.4

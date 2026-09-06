@@ -7,10 +7,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx watch src/app.ts",
+    "dev": "concurrently --kill-others --kill-signal SIGTERM --kill-timeout 25000 --names bot,worker \"./node_modules/.bin/tsx watch src/app.ts\" \"./node_modules/.bin/tsx watch src/worker.ts\"",
+    "bot:dev": "tsx watch src/app.ts",
     "worker:dev": "tsx watch src/worker.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/app.js",
+    "start": "concurrently --kill-others --kill-signal SIGTERM --kill-timeout 25000 --names bot,worker \"node dist/app.js\" \"node dist/worker.js\"",
+    "bot:start": "node dist/app.js",
     "worker:start": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -20,6 +22,7 @@
     "db:migrate:prod": "node dist/db/migrate.js"
   },
   "dependencies": {
+    "concurrently": "^10.0.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "grammy": "^1.46.0",
