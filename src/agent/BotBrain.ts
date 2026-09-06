@@ -73,7 +73,7 @@ export class BotBrain {
     try {
       await this.threads.append(context.threadId, context.userId,
         { role: 'assistant', content: result.transcript },
-        { messageId: context.outgoingMessageId, authorName: 'Ираида' });
+        { messageId: context.outgoingMessageId, authorName: 'Мэй Мэй' });
     } catch (error) {
       // Delivery already succeeded; a history failure must not resend the reply.
       this.logger.error({ error, chatId: context.chatId }, 'Failed to save agent reply in history');

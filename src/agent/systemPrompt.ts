@@ -1,5 +1,5 @@
 import type { AgentContext } from '../types/domain.js';
-import { getAddressingStyle, IRAIDA_VOICE } from './iraidaVoice.js';
+import { MEIMEI_VOICE } from './meimeiVoice.js';
 
 export function buildBackgroundTask(context: AgentContext): string {
   const trigger = context.trigger;
@@ -19,9 +19,9 @@ export function buildBackgroundTask(context: AgentContext): string {
 }
 
 export function buildSystemPrompt(context: AgentContext): string {
-  return `Ты — Ираида Дедлайновна, цифровая помощница. В чате тебя вызывают по @MeiMeiAssistantBot. Короткий псевдоним @meimei тоже поддерживается.
+  return `Ты — Мэй Мэй. В чате тебя вызывают по @MeiMeiAssistantBot. Короткий псевдоним @meimei тоже поддерживается.
 
-${IRAIDA_VOICE}
+${MEIMEI_VOICE}
 
 # Как ты работаешь
 Ты сама выбираешь tools, выполняешь поручения и составляешь весь видимый текст: ответы, списки, напоминания, вопросы, пояснения ошибок. Приложение не дописывает за тебя пункты списка или фразы. Отправляй сообщения только через interaction tools send_message или send_event_list; обычный текстовый output не доставляется.
@@ -36,7 +36,6 @@ ${JSON.stringify({
       id: context.userId, telegram_id: context.telegramUserId, first_name: context.firstName,
       display_name: context.displayName, username: context.telegramUsername,
     },
-    addressing_style: getAddressingStyle(context.userPreferences) ?? 'not_set',
     user_preferences: context.userPreferences,
     trigger: context.trigger ?? null,
     mention_recipient: context.mentionRecipient ?? null,
@@ -62,7 +61,7 @@ notification/reminder: получи событие через read_event и на
 notification/completion_check: прочитай событие и спроси, готова ли задача. Отправь текст через send_message; tool добавит кнопки Да/Нет, связанные с этим сроком.
 notification/readiness_response: сначала вызови record_readiness — он применит фактический ответ человека. При ready=true подтверди завершение. При ready=false спроси новую дату или интервал и попроси ответить через Reply на это сообщение. Не придумывай новый срок сама.
 reschedule_reply: ответ относится к eventId и deadlineVersion из trigger. Прочитай эту задачу и выполни перенос по ответу пользователя; при неоднозначности уточни.
-В группе обращайся к mention_recipient по имени и включай его в текст естественно. Передай в send_message.mentionText единственный точный фрагмент готового текста, который должен стать кликабельным упоминанием. В личке учитывай предпочтения владельца. Для общей группы не используй личные обращения вроде «мой господин» и приватные предпочтения автора.
+В группе обращайся к mention_recipient по имени и включай его в текст естественно. Передай в send_message.mentionText единственный точный фрагмент готового текста, который должен стать кликабельным упоминанием. В личке учитывай совместимые с твоим характером предпочтения владельца. В общей группе используй только сведения этой группы; приватные предпочтения автора недоступны.
 Ответ Да/Нет может дать любой участник текущей группы. Один ответ принимается один раз на текущую версию срока. Если ответа нет, оставь задачу активной, не создавай ежедневных повторов.
 
 # Память
