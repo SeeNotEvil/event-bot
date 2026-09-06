@@ -5,7 +5,6 @@ import type { Database } from '../db/types.js';
 import type { EnsureChatInput } from '../application/chats/ensureChat.js';
 import type { EnsureUserInput } from '../application/users/ensureUser.js';
 import { enqueueReadinessAnswer } from '../application/notifications/readiness.js';
-import { requestListPage } from '../application/schedule/chatList.js';
 import type { BotBrain } from '../agent/BotBrain.js';
 import type { Chat, User } from '../types/domain.js';
 import { extractGroupRequest } from './groupMessage.js';
@@ -94,8 +93,6 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           if (accepted) await dependencies.telegram.clearButtons(chatId, messageId);
           return;
         }
-        const page = /^list:(\d+)$/.exec(data);
-        if (page) await requestListPage(dependencies.database, chat.id, messageId, Number(page[1]));
       } catch (error) {
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram callback processing failed');
       }

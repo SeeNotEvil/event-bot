@@ -2,7 +2,6 @@ import { DateTime } from 'luxon';
 import type { Kysely, Selectable } from 'kysely';
 import { z } from 'zod';
 import type { Database, EventsTable } from '../../db/types.js';
-import { touchChatList } from '../schedule/chatList.js';
 import { localDateTimeSchema } from './schemas.js';
 import { formatDateForDatabase, parseLocalDateTime } from './time.js';
 
@@ -118,7 +117,6 @@ export async function configureNotifications(
         parsed.mode, parsed.reminderTimes ?? [], parsed.checkCompletion);
       changed ||= result.changed;
     }
-    if (changed) await touchChatList(transaction, chatId);
     return { success: true as const, changed, eventIds: parsed.eventIds };
   });
 }

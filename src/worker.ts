@@ -7,7 +7,6 @@ import { createBrain } from './agent/createBrain.js';
 import { requireChatMember } from './application/chats/chatMembers.js';
 import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
 import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
-import { claimChatList, renewListClaim, releaseListClaim, StaleAgentTask } from './application/schedule/chatList.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
@@ -113,30 +112,6 @@ export async function runNotificationWorker(): Promise<void> {
         }
       } catch (error) {
         logger.error({ error }, 'Notification batch failed');
-      }
-
-      if (!abortController.signal.aborted) {
-        try {
-          const list = await claimChatList(database, config.notificationWorker.lockTimeoutMs);
-          if (list) {
-            try {
-              await brain.handleBackground(Number(list.chat_id), {
-                kind: 'list_refresh', revision: Number(list.revision), page: Number(list.page),
-              }, {
-                listClaimToken: list.token,
-                beforeStep: async () => {
-                  if (abortController.signal.aborted) throw new Error('Worker is stopping');
-                  await renewListClaim(database, Number(list.chat_id), list.token, Number(list.revision));
-                },
-              });
-            } catch (error) {
-              await releaseListClaim(database, Number(list.chat_id), list.token, !(error instanceof StaleAgentTask));
-              if (!(error instanceof StaleAgentTask)) logger.error({ error, chatId: list.chat_id }, 'Chat list agent failed');
-            }
-          }
-        } catch (error) {
-          logger.error({ error }, 'Chat list dispatch failed');
-        }
       }
 
       if (!abortController.signal.aborted) {

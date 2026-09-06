@@ -10,7 +10,7 @@ function namespace(context: AgentContext) {
 
 export function canWriteMemory(context: AgentContext) {
   return context.userId !== null && context.sourceMessageId !== undefined
-    && context.trigger?.kind !== 'notification' && context.trigger?.kind !== 'list_refresh'
+    && context.trigger?.kind !== 'notification'
     && context.trigger?.kind !== 'service';
 }
 

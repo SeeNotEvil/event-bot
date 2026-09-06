@@ -2,7 +2,6 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { eventSchema } from '../../types/domain.js';
 import { mapEvent } from './mapEvent.js';
-import { touchChatList } from '../schedule/chatList.js';
 import {
   createEventsInputSchema,
   createEventsOutputSchema,
@@ -75,7 +74,6 @@ export async function createEvents(
     }
 
     const events = rows.map((row) => eventSchema.parse(mapEvent(row)));
-    await touchChatList(transaction, chatId);
 
     return createEventsOutputSchema.parse({
       createdCount: events.length,

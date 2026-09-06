@@ -19,8 +19,7 @@ import { deleteNotification } from '../../src/application/notifications/deleteNo
 import { processDueNotifications, type DueNotification } from '../../src/application/notifications/processDueNotifications.js';
 import { configureNotifications } from '../../src/application/notifications/configureNotifications.js';
 import { enqueueReadinessAnswer, recordReadiness, getRescheduleReplyContext } from '../../src/application/notifications/readiness.js';
-import { readTaskList, publishChatList, requestListPage, claimChatList, releaseListClaim, touchChatList } from '../../src/application/schedule/chatList.js';
-import type { TelegramGateway } from '../../src/telegram/TelegramAdapter.js';
+import { readTaskList } from '../../src/application/schedule/readTaskList.js';
 import type { AgentContext } from '../../src/types/domain.js';
 import { searchNotifications } from '../../src/application/notifications/searchNotifications.js';
 import { searchSchedule } from '../../src/application/schedule/searchSchedule.js';
@@ -1429,55 +1428,24 @@ describeWithMysql('MySQL application actions', () => {
     }
   });
 
-  it('edits one paginated list and keeps changes made during publication queued', async () => {
+  it('reads fresh task pages without storing a current page or a Telegram message', async () => {
     const unique = Date.now() + 2000;
     const owner = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
       telegramUsername: null, firstName: 'Автор списка', lastName: null, defaultTimezone: 'Europe/Moscow' });
     const chat = await ensureChat(database, { type: 'personal', userId: owner.id, timezone: owner.timezone });
-    const sendText = vi.fn(async () => 500);
-    const editText = vi.fn<TelegramGateway['editText']>(async () => undefined);
-    const telegram: TelegramGateway = { sendText, editText, clearButtons: async () => undefined };
-    const context: AgentContext = { userId: owner.id, chatId: chat.id, threadId: (await new MysqlThreadMemory(database).ensure(chat.id)).id, chatType: 'personal',
-      chatTitle: null, telegramUserId: unique, telegramChatId: unique, telegramChatType: 'private',
-      firstName: owner.firstName, displayName: owner.displayName, telegramUsername: null,
-      userPreferences: null, timezone: chat.timezone, now: '2038-10-01T12:00:00+03:00' };
     try {
-      await createEvents(database, chat.id, owner.id, { events: Array.from({ length: 6 }, (_, index) => ({
+      const created = await createEvents(database, chat.id, owner.id, { events: Array.from({ length: 6 }, (_, index) => ({
         title: `Задача ${index + 1}`, description: null, dateFrom: `2038-10-0${index + 2}`, dateTo: null, time: null,
       })) });
-      context.listSnapshot = await readTaskList(database, chat.id);
-      await publishChatList(database, telegram, context, 'Текст первой страницы от модели');
-      expect(sendText).toHaveBeenCalledWith(unique, 'Текст первой страницы от модели', {
-        reply_markup: { inline_keyboard: [[{ text: '›', callback_data: 'list:2' }]] },
-      });
-      await publishChatList(database, telegram, context, 'Повторный просмотр');
-      expect(sendText).toHaveBeenCalledTimes(1);
-      expect(editText).toHaveBeenLastCalledWith(unique, 500, 'Повторный просмотр', expect.any(Object));
-
-      await requestListPage(database, chat.id, 999, 2);
+      const first = await readTaskList(database, chat.id);
+      expect(first).toMatchObject({ page: 1, pageCount: 2, total: 6 });
+      expect(first.events.map((event) => event.title)).toEqual(['Задача 1', 'Задача 2', 'Задача 3', 'Задача 4', 'Задача 5']);
+      expect((await readTaskList(database, chat.id, 2)).events.map((event) => event.title)).toEqual(['Задача 6']);
       expect((await readTaskList(database, chat.id)).page).toBe(1);
-      await requestListPage(database, chat.id, 500, 2);
-      const secondPage = await readTaskList(database, chat.id);
-      expect(secondPage.events.map((event) => event.title)).toEqual(['Задача 6']);
-      context.listSnapshot = secondPage;
-      editText.mockImplementationOnce(async () => { await touchChatList(database, chat.id); });
-      await publishChatList(database, telegram, context, 'Текст второй страницы от модели');
-      const state = await database.selectFrom('chat_lists').selectAll()
-        .where('chat_id', '=', chat.id).executeTakeFirstOrThrow();
-      expect(Number(state.message_id)).toBe(500);
-      expect(Number(state.revision)).toBeGreaterThan(Number(state.published_revision));
-      expect(Number(state.page)).toBe(1);
-      const claim = await claimChatList(database, 60_000);
-      expect(Number(claim?.chat_id)).toBe(chat.id);
-      await releaseListClaim(database, chat.id, claim!.token, false);
-
-      context.listSnapshot = await readTaskList(database, chat.id);
-      editText.mockRejectedValueOnce(new Error('Bad Request: message to edit not found'));
-      sendText.mockResolvedValueOnce(501);
-      await publishChatList(database, telegram, context, 'Восстановленный список');
-      expect(sendText).toHaveBeenCalledTimes(2);
-      expect(Number((await database.selectFrom('chat_lists').select('message_id')
-        .where('chat_id', '=', chat.id).executeTakeFirstOrThrow()).message_id)).toBe(501);
+      await completeEvent(database, chat.id, { eventId: created.events[0]!.id });
+      const refreshed = await readTaskList(database, chat.id, 2);
+      expect(refreshed).toMatchObject({ page: 1, pageCount: 1, total: 5 });
+      expect(refreshed.events.map((event) => event.title)).toEqual(['Задача 2', 'Задача 3', 'Задача 4', 'Задача 5', 'Задача 6']);
     } finally {
       await database.deleteFrom('users').where('id', '=', owner.id).execute();
     }

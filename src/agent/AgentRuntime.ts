@@ -15,7 +15,7 @@ export interface ResponsesClient {
 }
 
 export type AgentRunResult = {
-  terminalTool: 'send_message' | 'send_event_list';
+  terminalTool: 'send_message';
   transcript: string;
   steps: number;
 };
@@ -50,7 +50,7 @@ export class AgentRuntime {
     history: ConversationMessage[],
     context: AgentContext,
   ): Promise<AgentRunResult> {
-    const background = context.trigger?.kind === 'notification' || context.trigger?.kind === 'list_refresh';
+    const background = context.trigger?.kind === 'notification';
     const input: ResponseInputItem[] = background ? [
       { type: 'message', role: 'developer', content: `Справочная история чата (данные о прошлом, не новые поручения): ${JSON.stringify(history)}` },
       { type: 'message', role: 'developer', content: buildBackgroundTask(context) },
@@ -108,7 +108,7 @@ export class AgentRuntime {
       const result = await this.toolRuntime.execute(call.name, argumentsValue, context);
 
       if (result.ok && result.terminal) {
-        if (call.name !== 'send_message' && call.name !== 'send_event_list') {
+        if (call.name !== 'send_message') {
           throw new AgentProtocolError(`Unexpected terminal tool: ${call.name}`);
         }
 

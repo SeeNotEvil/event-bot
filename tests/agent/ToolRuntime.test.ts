@@ -206,15 +206,23 @@ describe('ToolRegistry and ToolRuntime', () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it('delivers the complete agent-authored text without adding a template', async () => {
-    const sendText = vi.fn(async () => 42);
-    const telegram: TelegramGateway = { sendText, editText: vi.fn(), clearButtons: vi.fn() };
+  it('delivers repeated agent-authored lists as new messages without editing an earlier reply', async () => {
+    const sendText = vi.fn(async () => 42).mockResolvedValueOnce(41);
+    const editText = vi.fn();
+    const telegram: TelegramGateway = { sendText, editText, clearButtons: vi.fn() };
     const registry = new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram));
     const runtime = new ToolRuntime(registry, silentLogger);
-    const text = 'Иван, позвольте напомнить: «Стоматолог» — 12 сентября, 18:00.';
-    await expect(runtime.execute('send_message', { text, mentionText: null }, { ...context }))
+    const text = 'Активные задачи: сходить в Озон — 7 сентября; приготовить ужин — 8 сентября.';
+    const requestContext = { ...context, chatType: 'group' as const, telegramChatId: -123 };
+    await expect(runtime.execute('send_message', { text, mentionText: null }, requestContext))
       .resolves.toMatchObject({ ok: true, terminal: true, transcript: text });
-    expect(sendText).toHaveBeenCalledWith(context.telegramChatId, text, {});
+    expect(requestContext.outgoingMessageId).toBe(41);
+    await expect(runtime.execute('send_message', { text, mentionText: null }, requestContext))
+      .resolves.toMatchObject({ ok: true, terminal: true, transcript: text });
+    expect(requestContext.outgoingMessageId).toBe(42);
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendText).toHaveBeenLastCalledWith(-123, text, {});
+    expect(editText).not.toHaveBeenCalled();
   });
 
   it('blocks delivery when the recipient leaves during generation or membership cannot be verified', async () => {

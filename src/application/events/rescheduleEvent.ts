@@ -7,7 +7,6 @@ import { rescheduleEventInputSchema, rescheduleEventOutputSchema,
 import { formatUtcDateTimeInZone } from '../notifications/time.js';
 import { planNotifications, replaceNotificationPlan, type ReminderMode } from '../notifications/configureNotifications.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
-import { touchChatList } from '../schedule/chatList.js';
 
 function failure(reason: RescheduleEventFailureReason): RescheduleEventOutput {
   return { success: false, changed: false, event: null, notifications: [], cancelledNotificationCount: 0, reason };
@@ -55,7 +54,6 @@ export async function rescheduleEvent(
       const plan = await replaceNotificationPlan(transaction, updatedEvent, timezone, now,
         mode, input.reminderTimes ?? [], checkCompletion);
       const changed = scheduleChanged || plan.changed;
-      if (changed) await touchChatList(transaction, chatId);
       const notifications = await transaction.selectFrom('notifications').selectAll()
         .where('event_id', '=', input.eventId).where('status', '=', 'pending')
         .where('kind', '!=', 'readiness_response').orderBy('remind_at_utc').orderBy('id').execute();

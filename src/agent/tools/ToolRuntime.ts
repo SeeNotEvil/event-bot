@@ -2,7 +2,7 @@ import type { Logger } from 'pino';
 import type { AgentContext } from '../../types/domain.js';
 import { UnknownToolError } from './ToolRegistry.js';
 import type { ToolRegistry } from './ToolRegistry.js';
-import { StaleAgentTask } from '../../application/schedule/chatList.js';
+import { StaleAgentTask } from '../../application/StaleAgentTask.js';
 import { RecipientMembershipError } from '../../application/chats/chatMembers.js';
 
 export type ToolRuntimeSuccess = {

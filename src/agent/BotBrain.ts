@@ -48,7 +48,7 @@ export class BotBrain {
     return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }
 
-  public async handleBackground(chatId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'beforeSend' | 'listClaimToken' | 'mentionRecipient'> = {}) {
+  public async handleBackground(chatId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'beforeSend' | 'mentionRecipient'> = {}) {
     const row = await this.database.selectFrom('chats').leftJoin('users', 'users.id', 'chats.user_id')
       .select(['chats.type', 'chats.title', 'chats.timezone', 'chats.telegram_chat_id as group_chat',
         'users.id as owner_id', 'users.telegram_chat_id as personal_chat', 'users.first_name'])

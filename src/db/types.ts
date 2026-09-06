@@ -116,19 +116,6 @@ export interface NotificationsTable {
   updated_at: UpdatedTimestamp;
 }
 
-export interface ChatListsTable {
-  chat_id: number;
-  revision: Generated<number>;
-  published_revision: Generated<number>;
-  page: Generated<number>;
-  published_page: Generated<number>;
-  message_id: Generated<number | null>;
-  lock_token: Generated<string | null>;
-  locked_at: NullableDateTimeColumn;
-  retry_at: NullableDateTimeColumn;
-  last_error: Generated<string | null>;
-}
-
 export interface Database {
   users: UsersTable;
   chats: ChatsTable;
@@ -137,5 +124,4 @@ export interface Database {
   threads: ThreadsTable;
   memories: MemoriesTable;
   notifications: NotificationsTable;
-  chat_lists: ChatListsTable;
 }

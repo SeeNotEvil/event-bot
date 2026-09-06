@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { formatDateForDatabase } from './time.js';
-import { StaleAgentTask } from '../schedule/chatList.js';
+import { StaleAgentTask } from '../StaleAgentTask.js';
 
 export type DueNotification = {
   notificationId: number;

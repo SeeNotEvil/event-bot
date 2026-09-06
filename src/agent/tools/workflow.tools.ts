@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Database } from '../../db/types.js';
 import { eventSchema } from '../../types/domain.js';
 import { mapEvent } from '../../application/events/mapEvent.js';
-import { readTaskList } from '../../application/schedule/chatList.js';
+import { readTaskList } from '../../application/schedule/readTaskList.js';
 import type { ThreadMemory } from '../../application/memory/ThreadMemory.js';
 import { configureNotifications, configureNotificationsInputSchema } from '../../application/notifications/configureNotifications.js';
 import { recordReadiness } from '../../application/notifications/readiness.js';
@@ -31,15 +31,11 @@ export function createReadEventTool(database: Kysely<Database>) {
 
 export function createReadTaskListTool(database: Kysely<Database>) {
   return defineTool({
-    name: 'read_task_list', description: 'Читает текущую страницу постоянного активного списка. Данные уже отсортированы по дедлайну, задачи без даты в конце. Возвращает все задачи этой страницы, номер/количество страниц и актуальную версию. После этого сама напиши полный текст и вызови send_event_list. Выбор страницы пользователь делает кнопками списка.',
-    input: z.object({}),
-    output: z.object({ revision: z.number(), page: z.number(), pageCount: z.number(), total: z.number(),
+    name: 'read_task_list', description: 'Читает актуальные активные задачи текущего чата из базы данных. Они отсортированы по дедлайну, задачи без даты в конце. На странице до 5 задач; page=null означает первую страницу. Возвращает номер страницы, количество страниц и общее число задач. Для продолжения можно прочитать другую страницу. История сообщений не является источником актуального списка.',
+    input: z.object({ page: z.number().int().positive().safe().nullable() }),
+    output: z.object({ page: z.number(), pageCount: z.number(), total: z.number(),
       events: z.array(eventSchema.extend({ createdByName: z.string(), reminderRecipientName: z.string() })) }),
-    execute: async (context) => {
-      const result = await readTaskList(database, context.chatId);
-      context.listSnapshot = { revision: result.revision, page: result.page, pageCount: result.pageCount };
-      return result;
-    },
+    execute: (context, input) => readTaskList(database, context.chatId, input.page ?? 1),
   });
 }
 

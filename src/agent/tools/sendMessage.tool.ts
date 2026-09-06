@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import type { Database } from '../../db/types.js';
 import type { TelegramGateway, TelegramTextOptions } from '../../telegram/TelegramAdapter.js';
-import { StaleAgentTask } from '../../application/schedule/chatList.js';
+import { StaleAgentTask } from '../../application/StaleAgentTask.js';
 import { defineTool } from './Tool.js';
 
 export const sendMessageInputSchema = z.object({
@@ -18,7 +18,6 @@ export function createSendMessageTool(database: Kysely<Database>, telegram: Tele
     output: z.object({ success: z.literal(true), transcript: z.string() }),
     terminal: true,
     execute: async (context, input) => {
-      if (context.trigger?.kind === 'list_refresh') throw new Error('Update the list using read_task_list and send_event_list');
       await context.beforeStep?.();
       const options: TelegramTextOptions = {};
       if (context.mentionRecipient) {

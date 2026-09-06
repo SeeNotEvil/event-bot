@@ -27,8 +27,6 @@ export type AgentContext = {
   timezone: string;
   now: string;
   trigger?: AgentTrigger | undefined;
-  listSnapshot?: { revision: number; page: number; pageCount: number };
-  listClaimToken?: string;
   mentionRecipient?: { id: number; firstName: string } | undefined;
   recipientReferences?: ChatMemberReference[];
   beforeStep?: () => Promise<void>;
@@ -39,7 +37,6 @@ export type AgentContext = {
 export type AgentTrigger =
   | { kind: 'notification'; notificationId: number; eventId: number; deadlineVersion: number;
       notificationKind: 'reminder' | 'completion_check' | 'readiness_response'; answer: boolean | null }
-  | { kind: 'list_refresh'; revision: number; page: number }
   | { kind: 'reschedule_reply'; eventId: number; deadlineVersion: number }
   | { kind: 'service'; reason: string };
 

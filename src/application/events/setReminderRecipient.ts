@@ -5,7 +5,6 @@ import type { AgentContext } from '../../types/domain.js';
 import type { TelegramMembershipGateway } from '../../telegram/TelegramAdapter.js';
 import { checkChatMember, chatMemberSchema } from '../chats/chatMembers.js';
 import { ensureUser } from '../users/ensureUser.js';
-import { touchChatList } from '../schedule/chatList.js';
 
 export const setReminderRecipientInputSchema = z.object({
   eventId: z.number().int().positive().safe(),
@@ -23,7 +22,7 @@ const failure = (reason: NonNullable<Result['reason']>): Result => ({ success: f
 export async function setReminderRecipient(database: Kysely<Database>, telegram: TelegramMembershipGateway,
   context: AgentContext, rawInput: z.infer<typeof setReminderRecipientInputSchema>): Promise<Result> {
   const input = setReminderRecipientInputSchema.parse(rawInput);
-  if (context.userId === null || context.trigger?.kind === 'notification' || context.trigger?.kind === 'list_refresh') return failure('USER_REQUEST_REQUIRED');
+  if (context.userId === null || context.trigger?.kind === 'notification') return failure('USER_REQUEST_REQUIRED');
   const event = await database.selectFrom('events').innerJoin('chats', 'chats.id', 'events.chat_id')
     .innerJoin('users as author', 'author.id', 'events.user_id').selectAll('events')
     .select(['chats.type as chat_type', 'chats.telegram_chat_id', 'chats.user_id as owner_id', 'chats.timezone',
@@ -57,7 +56,6 @@ export async function setReminderRecipient(database: Kysely<Database>, telegram:
     // Invalidate in-flight text addressed to the previous recipient, retaining the same timers and buttons.
     await transaction.updateTable('notifications').set({ lock_token: null, locked_at: null, retry_at: null, last_error: null })
       .where('event_id', '=', current.id).where('status', '=', 'pending').execute();
-    await touchChatList(transaction, context.chatId);
     return { success: true, changed: true, recipient: member, recipientVersion: input.expectedRecipientVersion + 1, reason: null };
   });
 }

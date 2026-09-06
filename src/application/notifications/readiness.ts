@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import type { AgentContext, AgentTrigger } from '../../types/domain.js';
-import { StaleAgentTask, touchChatList } from '../schedule/chatList.js';
+import { StaleAgentTask } from '../StaleAgentTask.js';
 
 export async function enqueueReadinessAnswer(
   database: Kysely<Database>, chatId: number, messageId: number,
@@ -53,7 +53,6 @@ export async function recordReadiness(database: Kysely<Database>, context: Agent
           status: 'cancelled', lock_token: null, locked_at: null, updated_at: new Date(),
         }).where('event_id', '=', trigger.eventId).where('status', '=', 'pending')
           .where('id', '!=', trigger.notificationId).execute();
-        await touchChatList(transaction, context.chatId);
       }
       await transaction.updateTable('notifications').set({ action_applied: 1 })
         .where('id', '=', trigger.notificationId).execute();
