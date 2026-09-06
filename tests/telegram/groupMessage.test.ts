@@ -11,40 +11,40 @@ function entity(
 }
 
 describe('group message addressing', () => {
-  it('recognizes the exact meimei alias without treating other mentions as requests', () => {
-    for (const alias of ['@meimei', '@MeiMei', '@meimei_other']) {
-      const text = `${alias}, добавь это в список`;
-      const request = extractGroupRequest({ text, entities: [entity(text, alias, 'mention')],
-        replyToBot: false, botUsername: 'iraida_deadline_bot' });
-      expect(request).toBe(alias === '@meimei_other' ? null : 'добавь это в список');
+  it('recognizes the bot username and alias without treating other mentions as requests', () => {
+    for (const mention of ['@MeiMeiAssistantBot', '@meimeiassistantbot', '@MEIMEIASSISTANTBOT', '@meimei', '@MeiMei', '@meimei_other', '@MeiMeiAssistantBot_other']) {
+      const text = `${mention}, добавь это в список`;
+      const request = extractGroupRequest({ text, entities: [entity(text, mention, 'mention')],
+        replyToBot: false, botUsername: 'MeiMeiAssistantBot' });
+      expect(request).toBe(mention.endsWith('_other') ? null : 'добавь это в список');
     }
   });
   it('ignores ambient chat and extracts supported invocations', () => {
-    const mention = '👋 @iraida_deadline_bot, запиши встречу завтра';
-    const command = '/iraida@iraida_deadline_bot что у нас на неделе?';
+    const mention = '👋 @MeiMeiAssistantBot, запиши встречу завтра';
+    const command = '/iraida@MeiMeiAssistantBot что у нас на неделе?';
 
     expect(
       extractGroupRequest({
         text: 'кто будет на встрече?',
         entities: [],
         replyToBot: false,
-        botUsername: 'iraida_deadline_bot',
+        botUsername: 'MeiMeiAssistantBot',
       }),
     ).toBeNull();
     expect(
       extractGroupRequest({
         text: mention,
-        entities: [entity(mention, '@iraida_deadline_bot', 'mention')],
+        entities: [entity(mention, '@MeiMeiAssistantBot', 'mention')],
         replyToBot: false,
-        botUsername: 'iraida_deadline_bot',
+        botUsername: 'MeiMeiAssistantBot',
       }),
     ).toBe('👋, запиши встречу завтра');
     expect(
       extractGroupRequest({
         text: command,
-        entities: [entity(command, '/iraida@iraida_deadline_bot', 'bot_command')],
+        entities: [entity(command, '/iraida@MeiMeiAssistantBot', 'bot_command')],
         replyToBot: false,
-        botUsername: 'iraida_deadline_bot',
+        botUsername: 'MeiMeiAssistantBot',
       }),
     ).toBe('что у нас на неделе?');
     expect(
@@ -52,7 +52,7 @@ describe('group message addressing', () => {
         text: 'перенеси это на завтра',
         entities: [],
         replyToBot: true,
-        botUsername: 'iraida_deadline_bot',
+        botUsername: 'MeiMeiAssistantBot',
       }),
     ).toBe('перенеси это на завтра');
   });

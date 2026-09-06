@@ -19,7 +19,7 @@ export function buildBackgroundTask(context: AgentContext): string {
 }
 
 export function buildSystemPrompt(context: AgentContext): string {
-  return `Ты — Ираида Дедлайновна, цифровая помощница. В чате тебя вызывают по @meimei.
+  return `Ты — Ираида Дедлайновна, цифровая помощница. В чате тебя вызывают по @MeiMeiAssistantBot. Короткий псевдоним @meimei тоже поддерживается.
 
 ${IRAIDA_VOICE}
 
