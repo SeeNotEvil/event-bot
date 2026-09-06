@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config/config.js';
 import type { Database } from '../db/types.js';
-import type { TelegramGateway } from '../telegram/TelegramAdapter.js';
+import type { TelegramGateway, TelegramMembershipGateway } from '../telegram/TelegramAdapter.js';
 import { AgentRuntime, type ResponsesClient } from './AgentRuntime.js';
 import { BotBrain, type Clock } from './BotBrain.js';
 import { MysqlThreadMemory } from '../application/memory/MysqlThreadMemory.js';
@@ -24,16 +24,18 @@ import { createDeleteNotificationTool } from './tools/deleteNotification.tool.js
 import { createSaveUserPreferencesTool } from './tools/saveUserPreferences.tool.js';
 import { createSendMessageTool } from './tools/sendMessage.tool.js';
 import { createSendEventListTool } from './tools/sendEventList.tool.js';
+import { createSearchChatMembersTool, createSetReminderRecipientTool } from './tools/reminderRecipient.tools.js';
 import { createReadEventTool, createReadTaskListTool, createReadChatMessagesTool,
   createConfigureNotificationsTool, createRecordReadinessTool } from './tools/workflow.tools.js';
 
-export function createBrain(database: Kysely<Database>, telegram: TelegramGateway, client: ResponsesClient, config: AppConfig, logger: Logger, clock?: Clock) {
+export function createBrain(database: Kysely<Database>, telegram: TelegramGateway & TelegramMembershipGateway, client: ResponsesClient, config: AppConfig, logger: Logger, clock?: Clock) {
   const threads = new MysqlThreadMemory(database);
   const memories = new MysqlMemoryStore(database);
   const memoryBuilder = new MemoryContextBuilder(threads, memories, config.conversationHistoryLimit);
   const registry = new ToolRegistry()
     .register(createCreateEventsTool(database)).register(createSearchEventsTool(database))
     .register(createSearchScheduleTool(database)).register(createReadEventTool(database))
+    .register(createSearchChatMembersTool(database, telegram)).register(createSetReminderRecipientTool(database, telegram))
     .register(createReadTaskListTool(database)).register(createReadChatMessagesTool(threads))
     .register(createSearchMemoryTool(memories)).register(createSaveMemoryTool(memories)).register(createForgetMemoryTool(memories))
     .register(createCompleteEventTool(database)).register(createRescheduleEventTool(database))

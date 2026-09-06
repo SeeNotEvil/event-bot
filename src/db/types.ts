@@ -47,6 +47,8 @@ export interface EventsTable {
   deadline_version: Generated<number>;
   reminder_mode: Generated<'legacy' | 'default' | 'custom' | 'off'>;
   check_completion: Generated<number>;
+  reminder_recipient_user_id: Generated<number | null>;
+  recipient_version: Generated<number>;
   created_at: CreatedTimestamp;
   updated_at: UpdatedTimestamp;
 }

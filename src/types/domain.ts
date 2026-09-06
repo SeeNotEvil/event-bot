@@ -2,6 +2,13 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 import type { MemoryContext } from '../application/memory/MemoryContextBuilder.js';
 
+export type ChatMemberReference = {
+  telegramUserId: number;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+};
+
 export type AgentContext = {
   userId: number | null;
   chatId: number;
@@ -23,7 +30,9 @@ export type AgentContext = {
   listSnapshot?: { revision: number; page: number; pageCount: number };
   listClaimToken?: string;
   mentionRecipient?: { id: number; firstName: string } | undefined;
+  recipientReferences?: ChatMemberReference[];
   beforeStep?: () => Promise<void>;
+  beforeSend?: () => Promise<void>;
   outgoingMessageId?: number;
 };
 
@@ -86,6 +95,8 @@ export const eventSchema = z.object({
   deadlineVersion: z.number().int().positive(),
   reminderMode: z.enum(['legacy', 'default', 'custom', 'off']),
   checkCompletion: z.boolean(),
+  reminderRecipientUserId: z.number().int().positive().safe().nullable(),
+  recipientVersion: z.number().int().positive(),
 });
 
 export type EventDto = z.infer<typeof eventSchema>;

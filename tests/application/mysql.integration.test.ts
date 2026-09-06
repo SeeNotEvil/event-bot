@@ -1,6 +1,9 @@
 import type { Kysely } from 'kysely';
+import type { ChatMember } from 'grammy/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureChat } from '../../src/application/chats/ensureChat.js';
+import { searchChatMembers } from '../../src/application/chats/chatMembers.js';
+import { setReminderRecipient } from '../../src/application/events/setReminderRecipient.js';
 import { MysqlThreadMemory } from '../../src/application/memory/MysqlThreadMemory.js';
 import { MysqlMemoryStore } from '../../src/application/memory/MysqlMemoryStore.js';
 import { MemoryContextBuilder } from '../../src/application/memory/MemoryContextBuilder.js';
@@ -1338,6 +1341,94 @@ describeWithMysql('MySQL application actions', () => {
         .execute();
     }
   });
+  it('defaults reminders to the author and retargets only to a verified chat member without losing timers', async () => {
+    const unique = Date.now() + 40_000;
+    const author = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Автор', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const recipient = await ensureUser(database, { telegramUserId: unique + 1, telegramChatId: unique + 1,
+      telegramUsername: `anna_${unique}`, firstName: 'Анна', lastName: 'Петрова', defaultTimezone: 'Europe/Moscow' });
+    const chat = await ensureChat(database, { type: 'group', telegramChatId: -unique, title: 'Recipients', timezone: author.timezone });
+    const personal = await ensureChat(database, { type: 'personal', userId: author.id, timezone: author.timezone });
+    const context: AgentContext = { userId: author.id, chatId: chat.id,
+      threadId: (await new MysqlThreadMemory(database).ensure(chat.id)).id, chatType: 'group', chatTitle: chat.title,
+      telegramUserId: unique, telegramChatId: -unique, telegramChatType: 'supergroup', firstName: author.firstName,
+      displayName: author.displayName, telegramUsername: null, userPreferences: null,
+      timezone: chat.timezone, now: '2039-10-01T12:00:00+03:00' };
+    const getChatMember = vi.fn<(chatId: number, userId: number) => Promise<ChatMember>>(async (_chatId, userId) => ({
+      status: 'member', user: { id: userId, is_bot: false, first_name: userId === unique ? 'Автор' : 'Анна', last_name: 'Петрова' },
+    }));
+    const telegram = { getChatMember };
+    try {
+      const event = await createEvent(database, chat.id, author.id,
+        { title: 'Отчёт', description: null, dateFrom: '2039-10-05', dateTo: null, time: '12:00' });
+      expect(event).toMatchObject({ reminderRecipientUserId: null, recipientVersion: 1 });
+      expect((await readTaskList(database, chat.id)).events[0]).toMatchObject({ reminderRecipientName: 'Автор' });
+      await configureNotifications(database, chat.id, chat.timezone, context.now,
+        { eventIds: [event.id], mode: 'default', reminderTimes: null, checkCompletion: true });
+      const timers = () => database.selectFrom('notifications').select(['id', 'kind', 'remind_at_utc', 'deadline_version', 'status'])
+        .where('event_id', '=', event.id).orderBy('id').execute();
+      const originalTimers = await timers();
+      const input = { eventId: event.id, recipientTelegramUserId: recipient.telegramUserId, expectedRecipientVersion: 1 };
+
+      // A profile seen only in private conversations is not a group search candidate.
+      expect((await searchChatMembers(database, telegram, context, 'Анна Петрова')).members).toEqual([]);
+      context.recipientReferences = [{ telegramUserId: recipient.telegramUserId, firstName: 'Анна', lastName: 'Петрова', username: null }];
+      expect((await searchChatMembers(database, telegram, context, 'Анна Петрова')).members)
+        .toMatchObject([{ telegramUserId: recipient.telegramUserId }]);
+      expect(await setReminderRecipient(database, telegram, { ...context, chatId: personal.id }, input))
+        .toMatchObject({ success: false, reason: 'EVENT_NOT_FOUND_OR_INACTIVE' });
+      expect(await setReminderRecipient(database, telegram, { ...context, userId: null }, input))
+        .toMatchObject({ success: false, reason: 'USER_REQUEST_REQUIRED' });
+      const privateEvent = await createEvent(database, personal.id, author.id,
+        { title: 'Личное', description: null, dateFrom: null, dateTo: null, time: null });
+      expect(await setReminderRecipient(database, telegram, { ...context, chatId: personal.id }, { ...input, eventId: privateEvent.id }))
+        .toMatchObject({ success: false, reason: 'PRIVATE_CHAT_OWNER_ONLY' });
+      getChatMember.mockResolvedValueOnce({ status: 'left', user: { id: recipient.telegramUserId, is_bot: false, first_name: 'Анна' } });
+      expect(await setReminderRecipient(database, telegram, context, input)).toMatchObject({ success: false, reason: 'NOT_A_CHAT_MEMBER' });
+      getChatMember.mockRejectedValueOnce(new Error('Telegram unavailable'));
+      expect(await setReminderRecipient(database, telegram, context, input)).toMatchObject({ success: false, reason: 'MEMBERSHIP_UNVERIFIED' });
+
+      const options = { now: new Date('2039-10-07T12:00:00Z'), batchSize: 1, lockTimeoutMs: 60_000,
+        notificationIds: originalTimers.map((timer) => Number(timer.id)) };
+      const send = vi.fn();
+      const stale = await processDueNotifications(database, { ...options, run: async (notification, guard) => {
+        expect(notification.reminderRecipientTelegramId).toBe(author.telegramUserId);
+        await guard();
+        expect(await setReminderRecipient(database, telegram, context, input)).toMatchObject({ success: true, recipientVersion: 2 });
+        await guard();
+        send();
+      } });
+      expect(stale).toMatchObject({ skipped: 1, sent: 0 });
+      expect(send).not.toHaveBeenCalled();
+      expect(await timers()).toEqual(originalTimers);
+      expect((await readTaskList(database, chat.id)).events[0]).toMatchObject({ id: event.id, createdByName: 'Автор',
+        reminderRecipientUserId: recipient.id, reminderRecipientName: 'Анна', recipientVersion: 2,
+        dateFrom: event.dateFrom, dateTo: event.dateTo, time: event.time, deadlineVersion: event.deadlineVersion });
+      expect(getChatMember).toHaveBeenLastCalledWith(-unique, recipient.telegramUserId);
+      expect(Number((await database.selectFrom('events').select('user_id').where('id', '=', event.id).executeTakeFirstOrThrow()).user_id))
+        .toBe(author.id);
+      expect(Number((await database.selectFrom('users').select('telegram_chat_id').where('id', '=', recipient.id).executeTakeFirstOrThrow()).telegram_chat_id))
+        .toBe(recipient.telegramUserId);
+      expect(await setReminderRecipient(database, telegram, context, { ...input, recipientTelegramUserId: null }))
+        .toMatchObject({ success: false, reason: 'RECIPIENT_CHANGED' });
+
+      const delivered: DueNotification[] = [];
+      expect(await processDueNotifications(database, { ...options, batchSize: 2, run: async (notification, guard) => {
+        await guard(); delivered.push(notification);
+      } })).toMatchObject({ sent: 2 });
+      expect(delivered.map(({ kind, reminderRecipientTelegramId }) => ({ kind, reminderRecipientTelegramId }))).toEqual([
+        { kind: 'reminder', reminderRecipientTelegramId: recipient.telegramUserId },
+        { kind: 'completion_check', reminderRecipientTelegramId: recipient.telegramUserId },
+      ]);
+      expect(await setReminderRecipient(database, telegram, context, { ...input, recipientTelegramUserId: null, expectedRecipientVersion: 2 }))
+        .toMatchObject({ success: true, recipient: { telegramUserId: author.telegramUserId }, recipientVersion: 3 });
+      expect((await readTaskList(database, chat.id)).events[0]).toMatchObject({ reminderRecipientUserId: null, reminderRecipientName: 'Автор' });
+    } finally {
+      await database.deleteFrom('chats').where('id', 'in', [chat.id, personal.id]).execute();
+      await database.deleteFrom('users').where('id', 'in', [author.id, recipient.id]).execute();
+    }
+  });
+
   it('edits one paginated list and keeps changes made during publication queued', async () => {
     const unique = Date.now() + 2000;
     const owner = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,

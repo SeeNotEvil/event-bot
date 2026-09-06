@@ -14,6 +14,7 @@ import * as userPreferencesMigration from './migrations/005_user_preferences.js'
 import * as sharedCalendarsMigration from './migrations/006_shared_calendars.js';
 import * as agentWorkflowsMigration from './migrations/007_agent_workflows.js';
 import * as threadMemoryMigration from './migrations/008_thread_memory.js';
+import * as reminderRecipientMigration from './migrations/009_reminder_recipient.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -27,6 +28,7 @@ const migrationProvider: MigrationProvider = {
       '006_shared_calendars': sharedCalendarsMigration,
       '007_agent_workflows': agentWorkflowsMigration,
       '008_thread_memory': threadMemoryMigration,
+      '009_reminder_recipient': reminderRecipientMigration,
     }),
 };
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Kysely } from 'kysely';
+import type { ChatMember } from 'grammy/types';
 import { z } from 'zod';
 import { createCreateEventsTool } from '../../src/agent/tools/createEvents.tool.js';
 import { createCreateNotificationTool } from '../../src/agent/tools/createNotification.tool.js';
@@ -19,6 +20,7 @@ import { defineTool } from '../../src/agent/tools/Tool.js';
 import type { Database } from '../../src/db/types.js';
 import type { AgentContext } from '../../src/types/domain.js';
 import type { TelegramGateway } from '../../src/telegram/TelegramAdapter.js';
+import { checkChatMember, requireChatMember, RecipientMembershipError } from '../../src/application/chats/chatMembers.js';
 import { silentLogger } from '../helpers.js';
 
 const context: AgentContext = {
@@ -213,5 +215,40 @@ describe('ToolRegistry and ToolRuntime', () => {
     await expect(runtime.execute('send_message', { text, mentionText: null }, { ...context }))
       .resolves.toMatchObject({ ok: true, terminal: true, transcript: text });
     expect(sendText).toHaveBeenCalledWith(context.telegramChatId, text, {});
+  });
+
+  it('blocks delivery when the recipient leaves during generation or membership cannot be verified', async () => {
+    const person = { id: 456, is_bot: false, first_name: 'Анна' };
+    const getChatMember = vi.fn<() => Promise<ChatMember>>().mockResolvedValue({ status: 'member', user: person });
+    const sendText = vi.fn(async () => 42);
+    const telegram = { getChatMember, sendText, editText: vi.fn(), clearButtons: vi.fn() };
+    const runtime = new ToolRuntime(new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram)), silentLogger);
+    const runContext: AgentContext = { ...context, telegramChatId: -123, chatType: 'group',
+      mentionRecipient: { id: person.id, firstName: person.first_name },
+      beforeSend: () => requireChatMember(telegram, -123, person.id) };
+    expect(await checkChatMember(telegram, -123, person.id)).toMatchObject({ success: true });
+
+    // Telegram can report a restricted user with either membership state.
+    const restricted: Extract<ChatMember, { status: 'restricted' }> = { status: 'restricted', user: person, is_member: true,
+      can_send_messages: false, can_send_audios: false, can_send_documents: false, can_send_photos: false,
+      can_send_videos: false, can_send_video_notes: false, can_send_voice_notes: false, can_send_polls: false,
+      can_send_other_messages: false, can_add_web_page_previews: false, can_change_info: false,
+      can_invite_users: false, can_pin_messages: false, can_manage_topics: false,
+      can_react_to_messages: false, can_edit_tag: false, until_date: 0 };
+    getChatMember.mockResolvedValue(restricted);
+    expect(await checkChatMember(telegram, -123, person.id)).toMatchObject({ success: true });
+    const rejected: ChatMember[] = [
+      { status: 'left', user: person }, { status: 'kicked', user: person, until_date: 0 },
+      { ...restricted, is_member: false }, { status: 'member', user: { ...person, is_bot: true } },
+    ];
+    for (const member of rejected) {
+      getChatMember.mockResolvedValue(member);
+      await expect(runtime.execute('send_message', { text: 'Анна, задача готова?', mentionText: 'Анна' }, runContext))
+        .rejects.toBeInstanceOf(RecipientMembershipError);
+    }
+    getChatMember.mockRejectedValue(new Error('Telegram unavailable'));
+    await expect(runtime.execute('send_message', { text: 'Анна, задача готова?', mentionText: 'Анна' }, runContext))
+      .rejects.toMatchObject({ reason: 'MEMBERSHIP_UNVERIFIED' });
+    expect(sendText).not.toHaveBeenCalled();
   });
 });

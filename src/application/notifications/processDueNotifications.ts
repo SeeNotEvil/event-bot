@@ -18,6 +18,9 @@ export type DueNotification = {
   telegramChatId: number;
   createdByName: string;
   createdByTelegramId: number;
+  reminderRecipientTelegramId: number;
+  reminderRecipientName: string;
+  recipientVersion: number;
   timezone: string;
   chatType: 'personal' | 'group';
   chatTitle: string | null;
@@ -67,6 +70,7 @@ async function claimDueNotification(
       .innerJoin('events', 'events.id', 'notifications.event_id')
       .innerJoin('chats', 'chats.id', 'events.chat_id')
       .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
+      .leftJoin('users as reminder_recipient', 'reminder_recipient.id', 'events.reminder_recipient_user_id')
       .leftJoin('users as personal_owner', (join) =>
         join.onRef('personal_owner.id', '=', 'chats.user_id').on('chats.type', '=', 'personal'),
       )
@@ -83,6 +87,9 @@ async function claimDueNotification(
         'events.date_from',
         'events.date_to',
         'events.time as event_time',
+        'events.recipient_version',
+        'reminder_recipient.first_name as reminder_recipient_name',
+        'reminder_recipient.telegram_user_id as reminder_recipient_telegram_id',
         'chats.type as chat_type',
         'chats.id as chat_id',
         'chats.title as chat_title',
@@ -176,6 +183,9 @@ async function claimDueNotification(
       telegramChatId: Number(row.destination_chat_id),
       createdByName: row.creator_first_name ?? 'Пользователь',
       createdByTelegramId: Number(row.creator_telegram_id),
+      reminderRecipientTelegramId: Number(row.reminder_recipient_telegram_id ?? row.creator_telegram_id),
+      reminderRecipientName: row.reminder_recipient_name ?? row.creator_first_name ?? 'Пользователь',
+      recipientVersion: Number(row.recipient_version),
       timezone: row.timezone,
       chatType: row.chat_type,
       chatTitle: row.chat_title,
@@ -203,6 +213,7 @@ async function refreshNotificationClaim(
           .select('events.id')
           .whereRef('events.id', '=', 'notifications.event_id')
           .whereRef('events.deadline_version', '=', 'notifications.deadline_version')
+          .where('events.recipient_version', '=', notification.recipientVersion)
           .where((eb) => eb.or([
             eb('events.status', '=', 'active'),
             eb.and([eb('events.status', '=', 'completed'), eb('notifications.kind', '=', 'readiness_response'), eb('notifications.action_applied', '=', 1)]),

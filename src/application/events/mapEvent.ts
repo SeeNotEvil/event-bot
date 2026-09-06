@@ -24,5 +24,7 @@ export function mapEvent(row: Selectable<EventsTable>): EventDto {
     deadlineVersion: Number(row.deadline_version),
     reminderMode: row.reminder_mode,
     checkCompletion: Boolean(row.check_completion),
+    reminderRecipientUserId: row.reminder_recipient_user_id === null ? null : Number(row.reminder_recipient_user_id),
+    recipientVersion: Number(row.recipient_version),
   });
 }

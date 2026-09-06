@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Api } from 'grammy';
 import OpenAI from 'openai';
 import { createBrain } from './agent/createBrain.js';
+import { requireChatMember } from './application/chats/chatMembers.js';
 import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
 import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
 import { claimChatList, renewListClaim, releaseListClaim, StaleAgentTask } from './application/schedule/chatList.js';
@@ -87,14 +88,21 @@ export async function runNotificationWorker(): Promise<void> {
           lockTimeoutMs: config.notificationWorker.lockTimeoutMs,
           signal: abortController.signal,
           run: async (notification, guard) => {
+            const checkRecipient = async () => {
+              if (notification.chatType === 'group') {
+                await requireChatMember(telegram, notification.telegramChatId, notification.reminderRecipientTelegramId);
+              }
+            };
+            await checkRecipient();
             const result = await brain.handleBackground(notification.chatId, {
               kind: 'notification', notificationId: notification.notificationId,
               eventId: notification.eventId, deadlineVersion: notification.deadlineVersion,
               notificationKind: notification.kind, answer: notification.answer,
             }, {
               beforeStep: guard,
+              beforeSend: checkRecipient,
               mentionRecipient: notification.chatType === 'group'
-                ? { id: notification.createdByTelegramId, firstName: notification.createdByName } : undefined,
+                ? { id: notification.reminderRecipientTelegramId, firstName: notification.reminderRecipientName } : undefined,
             });
             if (result.messageId === undefined) throw new Error('Agent did not deliver a notification');
           },

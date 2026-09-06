@@ -8,7 +8,7 @@ import type { Database } from '../../db/types.js';
 import { defineTool } from './Tool.js';
 
 export const createEventsToolDescription =
-  'Атомарно создаёт весь набор из 1–100 задач текущего календаря. Передай все задачи одним вызовом. Дата может отсутствовать: dateFrom/dateTo/time=null. Неоднозначные даты и точные дубликаты требуют уточнения до изменений. После успеха сама вызови configure_notifications для созданных ID: default/checkCompletion=true, если пользователь не задал свои настройки. Затем выполни оставшиеся части запроса и сообщи общий итог.';
+  'Атомарно создаёт весь набор из 1–100 задач текущего чата. Передай все задачи одним вызовом. Дата может отсутствовать: dateFrom/dateTo/time=null. Неоднозначные даты и точные дубликаты требуют уточнения до изменений. После успеха сама вызови configure_notifications для созданных ID: default/checkCompletion=true, если пользователь не задал свои настройки. Затем выполни оставшиеся части запроса и сообщи общий итог.';
 
 export function createCreateEventsTool(database: Kysely<Database>) {
   return defineTool({

@@ -59,7 +59,17 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           botUsername: context.me.username,
         });
         if (request === null) return;
-        await dependencies.brain.handleMessage(request, user, chat, chatId, context.chat.type, { ...metadata, stored: true });
+        const referencedUsers = [
+          context.message.reply_to_message?.from,
+          ...(context.message.entities ?? context.message.caption_entities ?? [])
+            .flatMap((entity) => entity.type === 'text_mention' ? [entity.user] : []),
+        ].filter((person) => person !== undefined).filter((person) => !person.is_bot);
+        const recipientReferences = referencedUsers.map((person) => ({
+          telegramUserId: person.id, firstName: person.first_name,
+          lastName: person.last_name ?? null, username: person.username ?? null,
+        }));
+        await dependencies.brain.handleMessage(request, user, chat, chatId, context.chat.type,
+          { ...metadata, stored: true, recipientReferences });
       } catch (error) {
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram message processing failed');
       }

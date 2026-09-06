@@ -1,5 +1,5 @@
 import type { Api } from 'grammy';
-import type { InlineKeyboardMarkup, MessageEntity } from 'grammy/types';
+import type { ChatMember, InlineKeyboardMarkup, MessageEntity } from 'grammy/types';
 
 export type TelegramTextOptions = {
   entities?: MessageEntity[];
@@ -12,9 +12,17 @@ export interface TelegramGateway {
   clearButtons(chatId: number, messageId: number): Promise<void>;
 }
 
+export interface TelegramMembershipGateway {
+  getChatMember(chatId: number, userId: number): Promise<ChatMember>;
+}
+
 // The caller supplies the complete model-authored text. No prose is added here.
-export class TelegramAdapter implements TelegramGateway {
+export class TelegramAdapter implements TelegramGateway, TelegramMembershipGateway {
   public constructor(private readonly api: Api) {}
+
+  public getChatMember(chatId: number, userId: number): Promise<ChatMember> {
+    return this.api.getChatMember(chatId, userId);
+  }
 
   public async sendText(chatId: number, text: string, options?: TelegramTextOptions): Promise<number> {
     const message = await this.api.sendMessage(chatId, text, options);

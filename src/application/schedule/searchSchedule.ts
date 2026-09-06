@@ -42,8 +42,9 @@ export async function searchSchedule(
   let eventsQuery = database
     .selectFrom('events')
     .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
+    .leftJoin('users as recipient', 'recipient.id', 'events.reminder_recipient_user_id')
     .selectAll('events')
-    .select('event_creator.first_name as creator_first_name')
+    .select(['event_creator.first_name as creator_first_name', 'recipient.first_name as recipient_name'])
     .where('events.chat_id', '=', chatId)
     .where('events.status', 'in', eventStatuses);
 
@@ -163,6 +164,7 @@ export async function searchSchedule(
     events: eventRows.map((event) => ({
       ...mapEvent(event),
       createdByName: event.creator_first_name ?? 'Пользователь',
+      reminderRecipientName: event.recipient_name ?? event.creator_first_name ?? 'Пользователь',
       notifications: notificationsByEventId.get(Number(event.id)) ?? [],
     })),
   });

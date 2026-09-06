@@ -5,7 +5,7 @@ import { getRescheduleReplyContext } from '../application/notifications/readines
 import type { ThreadMemory, MessageMetadata } from '../application/memory/ThreadMemory.js';
 import type { MemoryContextBuilder } from '../application/memory/MemoryContextBuilder.js';
 import type { Database } from '../db/types.js';
-import type { AgentContext, AgentTrigger, Chat, ConversationMessage, TelegramChatType, User } from '../types/domain.js';
+import type { AgentContext, AgentTrigger, Chat, ChatMemberReference, ConversationMessage, TelegramChatType, User } from '../types/domain.js';
 import type { AgentRuntime, AgentRunResult } from './AgentRuntime.js';
 
 export type Clock = () => DateTime;
@@ -24,7 +24,7 @@ export class BotBrain {
   }
 
   public async handleMessage(message: string, user: User, chat: Chat, telegramChatId: number,
-    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string } = {},
+    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[] } = {},
   ): Promise<AgentRunResult> {
     // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
     const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
@@ -43,11 +43,12 @@ export class BotBrain {
       telegramUserId: user.telegramUserId, telegramChatId, telegramChatType,
       firstName: user.firstName, displayName: user.displayName, telegramUsername: user.telegramUsername,
       userPreferences: chat.type === 'personal' ? memory.profile?.content ?? null : null, timezone: chat.timezone, now, trigger,
+      recipientReferences: metadata.recipientReferences ?? [],
     };
     return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }
 
-  public async handleBackground(chatId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'listClaimToken' | 'mentionRecipient'> = {}) {
+  public async handleBackground(chatId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'beforeSend' | 'listClaimToken' | 'mentionRecipient'> = {}) {
     const row = await this.database.selectFrom('chats').leftJoin('users', 'users.id', 'chats.user_id')
       .select(['chats.type', 'chats.title', 'chats.timezone', 'chats.telegram_chat_id as group_chat',
         'users.id as owner_id', 'users.telegram_chat_id as personal_chat', 'users.first_name'])

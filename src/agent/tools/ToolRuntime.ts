@@ -3,6 +3,7 @@ import type { AgentContext } from '../../types/domain.js';
 import { UnknownToolError } from './ToolRegistry.js';
 import type { ToolRegistry } from './ToolRegistry.js';
 import { StaleAgentTask } from '../../application/schedule/chatList.js';
+import { RecipientMembershipError } from '../../application/chats/chatMembers.js';
 
 export type ToolRuntimeSuccess = {
   ok: true;
@@ -68,7 +69,7 @@ export class ToolRuntime {
     try {
       rawOutput = await tool.execute(context, input.data);
     } catch (error) {
-      if (error instanceof StaleAgentTask) throw error;
+      if (error instanceof StaleAgentTask || error instanceof RecipientMembershipError) throw error;
       this.logger.error(
         {
           error,

@@ -41,7 +41,8 @@ export async function readTaskList(database: Kysely<Database>, chatId: number) {
     const pageCount = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
     const page = Math.min(Number(state.page), pageCount);
     const rows = await transaction.selectFrom('events').innerJoin('users', 'users.id', 'events.user_id')
-      .selectAll('events').select('users.first_name as author')
+      .leftJoin('users as recipient', 'recipient.id', 'events.reminder_recipient_user_id')
+      .selectAll('events').select(['users.first_name as author', 'recipient.first_name as recipient_name'])
       .where('events.chat_id', '=', chatId).where('events.status', '=', 'active')
       .orderBy(sql`events.date_from is null`, 'asc')
       .orderBy(sql`coalesce(events.date_to, events.date_from)`, 'asc')
@@ -49,7 +50,8 @@ export async function readTaskList(database: Kysely<Database>, chatId: number) {
       .limit(LIST_PAGE_SIZE).offset((page - 1) * LIST_PAGE_SIZE).execute();
     return {
       revision: Number(state.revision), page, pageCount, total,
-      events: rows.map((row) => ({ ...mapEvent(row), createdByName: row.author ?? 'Пользователь' })),
+      events: rows.map((row) => ({ ...mapEvent(row), createdByName: row.author ?? 'Пользователь',
+        reminderRecipientName: row.recipient_name ?? row.author ?? 'Пользователь' })),
     };
   });
 }

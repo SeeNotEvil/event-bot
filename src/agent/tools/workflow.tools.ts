@@ -11,15 +11,20 @@ import { defineTool } from './Tool.js';
 
 export function createReadEventTool(database: Kysely<Database>) {
   return defineTool({
-    name: 'read_event', description: 'Читает актуальные данные одной задачи по известному ID в текущем календаре, включая автора, версию срока и режим уведомлений. Подходит для фонового задания и свежей проверки перед изменением.',
+    name: 'read_event', description: 'Читает актуальные данные одной задачи по известному ID в текущем чате, включая автора, получателя напоминаний, версии получателя и срока и режим уведомлений. Подходит для фонового задания и свежей проверки перед изменением.',
     input: z.object({ eventId: z.number().int().positive().safe() }),
-    output: z.object({ event: eventSchema.extend({ createdByName: z.string(), createdByTelegramId: z.number() }).nullable() }),
+    output: z.object({ event: eventSchema.extend({ createdByName: z.string(), createdByTelegramId: z.number(),
+      reminderRecipientName: z.string(), reminderRecipientTelegramId: z.number() }).nullable() }),
     execute: async (context, input) => {
       const row = await database.selectFrom('events').innerJoin('users', 'users.id', 'events.user_id')
-        .selectAll('events').select(['users.first_name as author', 'users.telegram_user_id as author_id'])
+        .leftJoin('users as recipient', 'recipient.id', 'events.reminder_recipient_user_id')
+        .selectAll('events').select(['users.first_name as author', 'users.telegram_user_id as author_id',
+          'recipient.first_name as recipient_name', 'recipient.telegram_user_id as recipient_telegram_id'])
         .where('events.chat_id', '=', context.chatId).where('events.id', '=', input.eventId)
         .where('events.status', '!=', 'deleted').executeTakeFirst();
-      return { event: row ? { ...mapEvent(row), createdByName: row.author ?? 'Пользователь', createdByTelegramId: Number(row.author_id) } : null };
+      return { event: row ? { ...mapEvent(row), createdByName: row.author ?? 'Пользователь', createdByTelegramId: Number(row.author_id),
+        reminderRecipientName: row.recipient_name ?? row.author ?? 'Пользователь',
+        reminderRecipientTelegramId: Number(row.recipient_telegram_id ?? row.author_id) } : null };
     },
   });
 }
@@ -29,7 +34,7 @@ export function createReadTaskListTool(database: Kysely<Database>) {
     name: 'read_task_list', description: 'Читает текущую страницу постоянного активного списка. Данные уже отсортированы по дедлайну, задачи без даты в конце. Возвращает все задачи этой страницы, номер/количество страниц и актуальную версию. После этого сама напиши полный текст и вызови send_event_list. Выбор страницы пользователь делает кнопками списка.',
     input: z.object({}),
     output: z.object({ revision: z.number(), page: z.number(), pageCount: z.number(), total: z.number(),
-      events: z.array(eventSchema.extend({ createdByName: z.string() })) }),
+      events: z.array(eventSchema.extend({ createdByName: z.string(), reminderRecipientName: z.string() })) }),
     execute: async (context) => {
       const result = await readTaskList(database, context.chatId);
       context.listSnapshot = { revision: result.revision, page: result.page, pageCount: result.pageCount };
