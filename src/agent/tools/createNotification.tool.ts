@@ -16,6 +16,6 @@ export function createCreateNotificationTool(database: Kysely<Database>) {
     input: createNotificationInputSchema,
     output: createNotificationOutputSchema,
     execute: (context, input) =>
-      createNotification(database, context.calendarId, context.timezone, context.now, input),
+      createNotification(database, context.chatId, context.timezone, context.now, input),
   });
 }

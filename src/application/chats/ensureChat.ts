@@ -1,38 +1,38 @@
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import type { Database } from '../../db/types.js';
-import type { Calendar } from '../../types/domain.js';
+import type { Chat } from '../../types/domain.js';
 
-const personalCalendarInputSchema = z.object({
+const personalChatInputSchema = z.object({
   type: z.literal('personal'),
   userId: z.number().int().positive().safe(),
   timezone: z.string().min(1).max(64),
 });
 
-const groupCalendarInputSchema = z.object({
+const groupChatInputSchema = z.object({
   type: z.literal('group'),
   telegramChatId: z.number().int().safe(),
   title: z.string().trim().min(1).max(255),
   timezone: z.string().min(1).max(64),
 });
 
-export const ensureCalendarInputSchema = z.discriminatedUnion('type', [
-  personalCalendarInputSchema,
-  groupCalendarInputSchema,
+export const ensureChatInputSchema = z.discriminatedUnion('type', [
+  personalChatInputSchema,
+  groupChatInputSchema,
 ]);
 
-export type EnsureCalendarInput = z.infer<typeof ensureCalendarInputSchema>;
+export type EnsureChatInput = z.infer<typeof ensureChatInputSchema>;
 
-export async function ensureCalendar(
+export async function ensureChat(
   database: Kysely<Database>,
-  rawInput: EnsureCalendarInput,
-): Promise<Calendar> {
-  const input = ensureCalendarInputSchema.parse(rawInput);
+  rawInput: EnsureChatInput,
+): Promise<Chat> {
+  const input = ensureChatInputSchema.parse(rawInput);
   const now = new Date();
 
   if (input.type === 'personal') {
     await database
-      .insertInto('calendars')
+      .insertInto('chats')
       .values({
         type: 'personal',
         user_id: input.userId,
@@ -45,7 +45,7 @@ export async function ensureCalendar(
       .execute();
   } else {
     await database
-      .insertInto('calendars')
+      .insertInto('chats')
       .values({
         type: 'group',
         user_id: null,
@@ -60,13 +60,13 @@ export async function ensureCalendar(
 
   const row = input.type === 'personal'
     ? await database
-        .selectFrom('calendars')
+        .selectFrom('chats')
         .selectAll()
         .where('type', '=', 'personal')
         .where('user_id', '=', input.userId)
         .executeTakeFirstOrThrow()
     : await database
-        .selectFrom('calendars')
+        .selectFrom('chats')
         .selectAll()
         .where('type', '=', 'group')
         .where('telegram_chat_id', '=', input.telegramChatId)

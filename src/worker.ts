@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { Api } from 'grammy';
 import OpenAI from 'openai';
 import { createBrain } from './agent/createBrain.js';
-import { claimCalendarList, renewListClaim, releaseListClaim, StaleAgentTask } from './application/schedule/calendarList.js';
+import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
+import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
+import { claimChatList, renewListClaim, releaseListClaim, StaleAgentTask } from './application/schedule/chatList.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
@@ -44,6 +46,11 @@ export async function runNotificationWorker(): Promise<void> {
     maxRetries: 0,
   });
   const brain = createBrain(database, telegram, openai.responses, config, logger);
+  const summaryTimeoutMs = Math.min(config.openai.timeoutMs, 20_000);
+  const summaryClient = new OpenAI({ apiKey: config.openai.apiKey, timeout: summaryTimeoutMs, maxRetries: 0 });
+  const summaries = new SummaryUpdater(new MysqlThreadMemory(database), summaryClient.responses,
+    config.openai.model, config.conversationHistoryLimit, Math.max(config.notificationWorker.lockTimeoutMs, summaryTimeoutMs + 5_000),
+    config.openai.maxOutputTokens, logger);
   const abortController = new AbortController();
   const stop = (signal: NodeJS.Signals): void => {
     if (abortController.signal.aborted) {
@@ -80,13 +87,13 @@ export async function runNotificationWorker(): Promise<void> {
           lockTimeoutMs: config.notificationWorker.lockTimeoutMs,
           signal: abortController.signal,
           run: async (notification, guard) => {
-            const result = await brain.handleBackground(notification.calendarId, {
+            const result = await brain.handleBackground(notification.chatId, {
               kind: 'notification', notificationId: notification.notificationId,
               eventId: notification.eventId, deadlineVersion: notification.deadlineVersion,
               notificationKind: notification.kind, answer: notification.answer,
             }, {
               beforeStep: guard,
-              mentionRecipient: notification.calendarType === 'group'
+              mentionRecipient: notification.chatType === 'group'
                 ? { id: notification.createdByTelegramId, firstName: notification.createdByName } : undefined,
             });
             if (result.messageId === undefined) throw new Error('Agent did not deliver a notification');
@@ -102,25 +109,33 @@ export async function runNotificationWorker(): Promise<void> {
 
       if (!abortController.signal.aborted) {
         try {
-          const list = await claimCalendarList(database, config.notificationWorker.lockTimeoutMs);
+          const list = await claimChatList(database, config.notificationWorker.lockTimeoutMs);
           if (list) {
             try {
-              await brain.handleBackground(Number(list.calendar_id), {
+              await brain.handleBackground(Number(list.chat_id), {
                 kind: 'list_refresh', revision: Number(list.revision), page: Number(list.page),
               }, {
                 listClaimToken: list.token,
                 beforeStep: async () => {
                   if (abortController.signal.aborted) throw new Error('Worker is stopping');
-                  await renewListClaim(database, Number(list.calendar_id), list.token, Number(list.revision));
+                  await renewListClaim(database, Number(list.chat_id), list.token, Number(list.revision));
                 },
               });
             } catch (error) {
-              await releaseListClaim(database, Number(list.calendar_id), list.token, !(error instanceof StaleAgentTask));
-              if (!(error instanceof StaleAgentTask)) logger.error({ error, calendarId: list.calendar_id }, 'Calendar list agent failed');
+              await releaseListClaim(database, Number(list.chat_id), list.token, !(error instanceof StaleAgentTask));
+              if (!(error instanceof StaleAgentTask)) logger.error({ error, chatId: list.chat_id }, 'Chat list agent failed');
             }
           }
         } catch (error) {
-          logger.error({ error }, 'Calendar list dispatch failed');
+          logger.error({ error }, 'Chat list dispatch failed');
+        }
+      }
+
+      if (!abortController.signal.aborted) {
+        try {
+          await summaries.processNext();
+        } catch (error) {
+          logger.error({ error }, 'Thread summary dispatch failed');
         }
       }
 

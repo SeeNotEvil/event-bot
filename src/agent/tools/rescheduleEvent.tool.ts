@@ -17,7 +17,7 @@ export function createRescheduleEventTool(database: Kysely<Database>) {
     execute: (context, input) =>
       rescheduleEvent(
         database,
-        context.calendarId,
+        context.chatId,
         context.timezone,
         context.now,
         input,

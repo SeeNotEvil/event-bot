@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { eventSchema } from '../../types/domain.js';
 import { mapEvent } from './mapEvent.js';
-import { touchCalendarList } from '../schedule/calendarList.js';
+import { touchChatList } from '../schedule/chatList.js';
 import {
   createEventsInputSchema,
   createEventsOutputSchema,
@@ -12,7 +12,7 @@ import {
 
 export async function createEvents(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   createdByUserId: number,
   rawInput: CreateEventsInput,
 ): Promise<CreateEventsOutput> {
@@ -30,7 +30,7 @@ export async function createEvents(
       .values(
         input.events.map((event) => ({
           user_id: createdByUserId,
-          calendar_id: calendarId,
+          chat_id: chatId,
           title: event.title,
           description: event.description,
           date_from: event.dateFrom,
@@ -61,7 +61,7 @@ export async function createEvents(
     const rows = await transaction
       .selectFrom('events')
       .selectAll()
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .where('id', '>=', firstEventId)
       .where('id', '<=', lastEventId)
       .orderBy('id', 'asc')
@@ -75,7 +75,7 @@ export async function createEvents(
     }
 
     const events = rows.map((row) => eventSchema.parse(mapEvent(row)));
-    await touchCalendarList(transaction, calendarId);
+    await touchChatList(transaction, chatId);
 
     return createEventsOutputSchema.parse({
       createdCount: events.length,

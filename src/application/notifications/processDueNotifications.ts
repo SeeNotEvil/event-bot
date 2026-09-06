@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { formatDateForDatabase } from './time.js';
-import { StaleAgentTask } from '../schedule/calendarList.js';
+import { StaleAgentTask } from '../schedule/chatList.js';
 
 export type DueNotification = {
   notificationId: number;
   eventId: number;
-  calendarId: number;
+  chatId: number;
   kind: 'reminder' | 'completion_check' | 'readiness_response';
   deadlineVersion: number;
   answer: boolean | null;
@@ -19,8 +19,8 @@ export type DueNotification = {
   createdByName: string;
   createdByTelegramId: number;
   timezone: string;
-  calendarType: 'personal' | 'group';
-  calendarTitle: string | null;
+  chatType: 'personal' | 'group';
+  chatTitle: string | null;
   recipientFirstName: string | null;
   recipientPreferences: string | null;
 };
@@ -65,12 +65,13 @@ async function claimDueNotification(
     let query = transaction
       .selectFrom('notifications')
       .innerJoin('events', 'events.id', 'notifications.event_id')
-      .innerJoin('calendars', 'calendars.id', 'events.calendar_id')
+      .innerJoin('chats', 'chats.id', 'events.chat_id')
       .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
       .leftJoin('users as personal_owner', (join) =>
-        join.onRef('personal_owner.id', '=', 'calendars.user_id').on('calendars.type', '=', 'personal'),
+        join.onRef('personal_owner.id', '=', 'chats.user_id').on('chats.type', '=', 'personal'),
       )
-      .leftJoin('user_preferences', 'user_preferences.user_id', 'personal_owner.id')
+      .leftJoin('memories as profile', (join) => join.onRef('profile.user_id', '=', 'personal_owner.id')
+        .on('profile.namespace', '=', 'user').on('profile.memory_key', '=', 'profile'))
       .select([
         'notifications.id as notification_id',
         'notifications.event_id',
@@ -82,13 +83,13 @@ async function claimDueNotification(
         'events.date_from',
         'events.date_to',
         'events.time as event_time',
-        'calendars.type as calendar_type',
-        'calendars.id as calendar_id',
-        'calendars.title as calendar_title',
+        'chats.type as chat_type',
+        'chats.id as chat_id',
+        'chats.title as chat_title',
         'personal_owner.first_name as recipient_first_name',
-        'user_preferences.content as recipient_preferences',
+        'profile.content as recipient_preferences',
         sql<number | null>`case
-          when calendars.type = 'group' then calendars.telegram_chat_id
+          when chats.type = 'group' then chats.telegram_chat_id
           else personal_owner.telegram_chat_id
         end`.as('destination_chat_id'),
         'event_creator.first_name as creator_first_name',
@@ -105,11 +106,11 @@ async function claimDueNotification(
       .where((expression) =>
         expression.or([
           expression.and([
-            expression('calendars.type', '=', 'group'),
-            expression('calendars.telegram_chat_id', 'is not', null),
+            expression('chats.type', '=', 'group'),
+            expression('chats.telegram_chat_id', 'is not', null),
           ]),
           expression.and([
-            expression('calendars.type', '=', 'personal'),
+            expression('chats.type', '=', 'personal'),
             expression('personal_owner.telegram_chat_id', 'is not', null),
           ]),
         ]),
@@ -164,7 +165,7 @@ async function claimDueNotification(
       claimToken,
       notificationId: Number(row.notification_id),
       eventId: Number(row.event_id),
-      calendarId: Number(row.calendar_id),
+      chatId: Number(row.chat_id),
       kind: row.kind,
       deadlineVersion: Number(row.deadline_version),
       answer: row.answer === null ? null : Boolean(row.answer),
@@ -176,8 +177,8 @@ async function claimDueNotification(
       createdByName: row.creator_first_name ?? 'Пользователь',
       createdByTelegramId: Number(row.creator_telegram_id),
       timezone: row.timezone,
-      calendarType: row.calendar_type,
-      calendarTitle: row.calendar_title,
+      chatType: row.chat_type,
+      chatTitle: row.chat_title,
       recipientFirstName: row.recipient_first_name,
       recipientPreferences: row.recipient_preferences,
     };

@@ -15,6 +15,6 @@ export function createSearchNotificationsTool(database: Kysely<Database>) {
     input: searchNotificationsInputSchema,
     output: searchNotificationsOutputSchema,
     execute: (context, input) =>
-      searchNotifications(database, context.calendarId, context.timezone, input),
+      searchNotifications(database, context.chatId, context.timezone, input),
   });
 }

@@ -14,7 +14,7 @@ import {
 
 export async function searchNotifications(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   timezone: string,
   rawInput: SearchNotificationsInput,
 ): Promise<SearchNotificationsOutput> {
@@ -43,7 +43,7 @@ export async function searchNotifications(
       'notifications.source',
       'events.title as event_title',
     ])
-    .where('events.calendar_id', '=', calendarId)
+    .where('events.chat_id', '=', chatId)
     .where('notifications.kind', '!=', 'readiness_response')
     .where('notifications.status', 'in', input.statuses ?? ['pending']);
 

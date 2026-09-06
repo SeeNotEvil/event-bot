@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import OpenAI from 'openai';
 import { Bot } from 'grammy';
 import { createBrain } from './agent/createBrain.js';
-import { ensureCalendar } from './application/calendars/ensureCalendar.js';
+import { ensureChat } from './application/chats/ensureChat.js';
 import { ensureUser } from './application/users/ensureUser.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
       brain,
       database,
       ensureUser: (input) => ensureUser(database, input),
-      ensureCalendar: (input) => ensureCalendar(database, input),
+      ensureChat: (input) => ensureChat(database, input),
       telegram,
       defaultTimezone: config.defaultTimezone,
       logger,

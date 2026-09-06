@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import type { Database } from '../../db/types.js';
 import type { TelegramGateway, TelegramTextOptions } from '../../telegram/TelegramAdapter.js';
-import { StaleAgentTask } from '../../application/schedule/calendarList.js';
+import { StaleAgentTask } from '../../application/schedule/chatList.js';
 import { defineTool } from './Tool.js';
 
 export const sendMessageInputSchema = z.object({

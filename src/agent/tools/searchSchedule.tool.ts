@@ -15,6 +15,6 @@ export function createSearchScheduleTool(database: Kysely<Database>) {
     input: searchScheduleInputSchema,
     output: searchScheduleOutputSchema,
     execute: (context, input) =>
-      searchSchedule(database, context.calendarId, context.timezone, input),
+      searchSchedule(database, context.chatId, context.timezone, input),
   });
 }

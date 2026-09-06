@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import type { Database } from '../../db/types.js';
-import { publishCalendarList } from '../../application/schedule/calendarList.js';
+import { publishChatList } from '../../application/schedule/chatList.js';
 import type { TelegramGateway } from '../../telegram/TelegramAdapter.js';
 import { defineTool } from './Tool.js';
 
@@ -16,7 +16,7 @@ export function createSendEventListTool(database: Kysely<Database>, telegram: Te
     terminal: true,
     execute: async (context, input) => {
       if (context.trigger?.kind === 'notification') throw new Error('Deliver the notification using send_message');
-      context.outgoingMessageId = await publishCalendarList(database, telegram, context, input.text);
+      context.outgoingMessageId = await publishChatList(database, telegram, context, input.text);
       return { success: true as const, transcript: input.text };
     },
     transcript: (_input, output) => output.transcript,

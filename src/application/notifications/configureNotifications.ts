@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import type { Kysely, Selectable } from 'kysely';
 import { z } from 'zod';
 import type { Database, EventsTable } from '../../db/types.js';
-import { touchCalendarList } from '../schedule/calendarList.js';
+import { touchChatList } from '../schedule/chatList.js';
 import { localDateTimeSchema } from './schemas.js';
 import { formatDateForDatabase, parseLocalDateTime } from './time.js';
 
@@ -102,14 +102,14 @@ export const configureNotificationsInputSchema = z.object({
 });
 
 export async function configureNotifications(
-  database: Kysely<Database>, calendarId: number, timezone: string, now: string,
+  database: Kysely<Database>, chatId: number, timezone: string, now: string,
   input: z.infer<typeof configureNotificationsInputSchema>,
 ) {
   const parsed = configureNotificationsInputSchema.parse(input);
   if ((parsed.mode === 'custom') !== (parsed.reminderTimes !== null)) throw new Error('Provide reminderTimes only for custom mode');
   return database.transaction().execute(async (transaction) => {
     const events = await transaction.selectFrom('events').selectAll()
-      .where('calendar_id', '=', calendarId).where('id', 'in', parsed.eventIds)
+      .where('chat_id', '=', chatId).where('id', 'in', parsed.eventIds)
       .where('status', '=', 'active').orderBy('id').forUpdate().execute();
     if (events.length !== parsed.eventIds.length) throw new Error('EVENT_NOT_FOUND_OR_INACTIVE');
     let changed = false;
@@ -118,7 +118,7 @@ export async function configureNotifications(
         parsed.mode, parsed.reminderTimes ?? [], parsed.checkCompletion);
       changed ||= result.changed;
     }
-    if (changed) await touchCalendarList(transaction, calendarId);
+    if (changed) await touchChatList(transaction, chatId);
     return { success: true as const, changed, eventIds: parsed.eventIds };
   });
 }

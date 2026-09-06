@@ -1,16 +1,16 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import type { AgentContext, AgentTrigger } from '../../types/domain.js';
-import { StaleAgentTask, touchCalendarList } from '../schedule/calendarList.js';
+import { StaleAgentTask, touchChatList } from '../schedule/chatList.js';
 
 export async function enqueueReadinessAnswer(
-  database: Kysely<Database>, calendarId: number, messageId: number,
+  database: Kysely<Database>, chatId: number, messageId: number,
   notificationId: number, deadlineVersion: number, answer: boolean,
 ): Promise<boolean> {
   return database.transaction().execute(async (transaction) => {
     const reference = await transaction.selectFrom('notifications').innerJoin('events', 'events.id', 'notifications.event_id')
       .select('events.id').where('notifications.id', '=', notificationId)
-      .where('events.calendar_id', '=', calendarId).executeTakeFirst();
+      .where('events.chat_id', '=', chatId).executeTakeFirst();
     if (!reference) return false;
     const event = await transaction.selectFrom('events').selectAll().where('id', '=', Number(reference.id)).forUpdate().executeTakeFirstOrThrow();
     const question = await transaction.selectFrom('notifications').selectAll()
@@ -38,7 +38,7 @@ export async function recordReadiness(database: Kysely<Database>, context: Agent
   }
   return database.transaction().execute(async (transaction) => {
     const event = await transaction.selectFrom('events').selectAll()
-      .where('id', '=', trigger.eventId).where('calendar_id', '=', context.calendarId).forUpdate().executeTakeFirst();
+      .where('id', '=', trigger.eventId).where('chat_id', '=', context.chatId).forUpdate().executeTakeFirst();
     const response = await transaction.selectFrom('notifications').selectAll()
       .where('id', '=', trigger.notificationId).where('event_id', '=', trigger.eventId).forUpdate().executeTakeFirst();
     if (!event || !response || response.kind !== 'readiness_response' || response.answer === null ||
@@ -53,7 +53,7 @@ export async function recordReadiness(database: Kysely<Database>, context: Agent
           status: 'cancelled', lock_token: null, locked_at: null, updated_at: new Date(),
         }).where('event_id', '=', trigger.eventId).where('status', '=', 'pending')
           .where('id', '!=', trigger.notificationId).execute();
-        await touchCalendarList(transaction, context.calendarId);
+        await touchChatList(transaction, context.chatId);
       }
       await transaction.updateTable('notifications').set({ action_applied: 1 })
         .where('id', '=', trigger.notificationId).execute();
@@ -63,11 +63,11 @@ export async function recordReadiness(database: Kysely<Database>, context: Agent
 }
 
 export async function getRescheduleReplyContext(
-  database: Kysely<Database>, calendarId: number, replyToMessageId: number,
+  database: Kysely<Database>, chatId: number, replyToMessageId: number,
 ): Promise<AgentTrigger | undefined> {
   const response = await database.selectFrom('notifications').innerJoin('events', 'events.id', 'notifications.event_id')
     .select(['events.id', 'events.deadline_version'])
-    .where('events.calendar_id', '=', calendarId).where('events.status', '=', 'active')
+    .where('events.chat_id', '=', chatId).where('events.status', '=', 'active')
     .whereRef('events.deadline_version', '=', 'notifications.deadline_version')
     .where('notifications.kind', '=', 'readiness_response').where('notifications.answer', '=', 0)
     .where('notifications.action_applied', '=', 1).where('notifications.status', '=', 'sent')

@@ -7,20 +7,20 @@ import { rescheduleEventInputSchema, rescheduleEventOutputSchema,
 import { formatUtcDateTimeInZone } from '../notifications/time.js';
 import { planNotifications, replaceNotificationPlan, type ReminderMode } from '../notifications/configureNotifications.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
-import { touchCalendarList } from '../schedule/calendarList.js';
+import { touchChatList } from '../schedule/chatList.js';
 
 function failure(reason: RescheduleEventFailureReason): RescheduleEventOutput {
   return { success: false, changed: false, event: null, notifications: [], cancelledNotificationCount: 0, reason };
 }
 
 export async function rescheduleEvent(
-  database: Kysely<Database>, calendarId: number, timezone: string, now: string, rawInput: RescheduleEventInput,
+  database: Kysely<Database>, chatId: number, timezone: string, now: string, rawInput: RescheduleEventInput,
 ): Promise<RescheduleEventOutput> {
   const input = rescheduleEventInputSchema.parse(rawInput);
   try {
     return await database.transaction().execute(async (transaction) => {
       const event = await transaction.selectFrom('events').selectAll()
-        .where('id', '=', input.eventId).where('calendar_id', '=', calendarId)
+        .where('id', '=', input.eventId).where('chat_id', '=', chatId)
         .where('status', '=', 'active').forUpdate().executeTakeFirst();
       if (!event) return failure('EVENT_NOT_FOUND_OR_INACTIVE');
       const pending = await transaction.selectFrom('notifications').selectAll()
@@ -55,7 +55,7 @@ export async function rescheduleEvent(
       const plan = await replaceNotificationPlan(transaction, updatedEvent, timezone, now,
         mode, input.reminderTimes ?? [], checkCompletion);
       const changed = scheduleChanged || plan.changed;
-      if (changed) await touchCalendarList(transaction, calendarId);
+      if (changed) await touchChatList(transaction, chatId);
       const notifications = await transaction.selectFrom('notifications').selectAll()
         .where('event_id', '=', input.eventId).where('status', '=', 'pending')
         .where('kind', '!=', 'readiness_response').orderBy('remind_at_utc').orderBy('id').execute();

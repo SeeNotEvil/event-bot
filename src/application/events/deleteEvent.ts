@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
-import { touchCalendarList } from '../schedule/calendarList.js';
+import { touchChatList } from '../schedule/chatList.js';
 import {
   deleteEventInputSchema,
   deleteEventOutputSchema,
@@ -11,7 +11,7 @@ import {
 
 export async function deleteEvent(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   rawInput: DeleteEventInput,
 ): Promise<DeleteEventOutput> {
   const input = deleteEventInputSchema.parse(rawInput);
@@ -21,7 +21,7 @@ export async function deleteEvent(
       .selectFrom('events')
       .select(['id', 'title'])
       .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .where('status', 'in', ['active', 'completed'])
       .forUpdate()
       .executeTakeFirst();
@@ -40,12 +40,12 @@ export async function deleteEvent(
       .updateTable('events')
       .set({ status: 'deleted', updated_at: now })
       .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .where('status', 'in', ['active', 'completed'])
       .executeTakeFirstOrThrow();
 
     await cancelPendingEventNotifications(transaction, [input.eventId], now);
-    await touchCalendarList(transaction, calendarId);
+    await touchChatList(transaction, chatId);
 
     return deleteEventOutputSchema.parse({
       success: true,

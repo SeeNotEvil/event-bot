@@ -1,11 +1,15 @@
 import { DateTime } from 'luxon';
 import { z } from 'zod';
+import type { MemoryContext } from '../application/memory/MemoryContextBuilder.js';
 
 export type AgentContext = {
   userId: number | null;
-  calendarId: number;
-  calendarType: CalendarType;
-  calendarTitle: string | null;
+  chatId: number;
+  threadId: number;
+  memory?: MemoryContext;
+  sourceMessageId?: number;
+  chatType: ChatType;
+  chatTitle: string | null;
   telegramUserId: number | null;
   telegramChatId: number;
   telegramChatType: TelegramChatType;
@@ -41,12 +45,12 @@ export type User = {
   timezone: string;
 };
 
-export type CalendarType = 'personal' | 'group';
+export type ChatType = 'personal' | 'group';
 export type TelegramChatType = 'private' | 'group' | 'supergroup';
 
-export type Calendar = {
+export type Chat = {
   id: number;
-  type: CalendarType;
+  type: ChatType;
   userId: number | null;
   telegramChatId: number | null;
   title: string | null;

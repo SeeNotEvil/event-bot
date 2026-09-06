@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
 import { mapEvent } from './mapEvent.js';
-import { touchCalendarList } from '../schedule/calendarList.js';
+import { touchChatList } from '../schedule/chatList.js';
 import {
   completeEventInputSchema,
   completeEventOutputSchema,
@@ -12,7 +12,7 @@ import {
 
 export async function completeEvent(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   rawInput: CompleteEventInput,
   now = new Date(),
 ): Promise<CompleteEventOutput> {
@@ -23,7 +23,7 @@ export async function completeEvent(
       .selectFrom('events')
       .selectAll()
       .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .where('status', 'in', ['active', 'completed'])
       .forUpdate()
       .executeTakeFirst();
@@ -55,7 +55,7 @@ export async function completeEvent(
         updated_at: now,
       })
       .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .where('status', '=', 'active')
       .executeTakeFirstOrThrow();
 
@@ -68,12 +68,12 @@ export async function completeEvent(
       [input.eventId],
       now,
     );
-    await touchCalendarList(transaction, calendarId);
+    await touchChatList(transaction, chatId);
     const completedEvent = await transaction
       .selectFrom('events')
       .selectAll()
       .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
+      .where('chat_id', '=', chatId)
       .executeTakeFirstOrThrow();
 
     return completeEventOutputSchema.parse({

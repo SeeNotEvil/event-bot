@@ -15,6 +15,6 @@ export function createDeleteEventsTool(database: Kysely<Database>) {
       'Транзакционно и мягко удаляет явно выбранную группу из 2–100 active- или completed-событий текущего календаря и отменяет их pending-напоминания. Передавай весь набор уникальных id только из одного свежего search_events и не расширяй условия пользователя. В составном поручении до удаления должны быть определены обязательные данные для всех его частей: если при замене расписания неизвестна дата нового события, сначала уточни её и ничего не удаляй. Если хотя бы один id недоступен, не удаляется ничего. После успеха продолжи остальные действия поручения, затем отправь общий итог.',
     input: deleteEventsInputSchema,
     output: deleteEventsOutputSchema,
-    execute: (context, input) => deleteEvents(database, context.calendarId, input),
+    execute: (context, input) => deleteEvents(database, context.chatId, input),
   });
 }

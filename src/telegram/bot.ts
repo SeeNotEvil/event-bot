@@ -2,20 +2,20 @@ import type { Bot, Context } from 'grammy';
 import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
 import type { Database } from '../db/types.js';
-import type { EnsureCalendarInput } from '../application/calendars/ensureCalendar.js';
+import type { EnsureChatInput } from '../application/chats/ensureChat.js';
 import type { EnsureUserInput } from '../application/users/ensureUser.js';
 import { enqueueReadinessAnswer } from '../application/notifications/readiness.js';
-import { requestListPage } from '../application/schedule/calendarList.js';
+import { requestListPage } from '../application/schedule/chatList.js';
 import type { BotBrain } from '../agent/BotBrain.js';
-import type { Calendar, User } from '../types/domain.js';
+import type { Chat, User } from '../types/domain.js';
 import { extractGroupRequest } from './groupMessage.js';
 import { KeyedSerialQueue } from './KeyedSerialQueue.js';
 import type { TelegramGateway } from './TelegramAdapter.js';
 
 export type EnsureUserAction = (input: EnsureUserInput) => Promise<User>;
-export type EnsureCalendarAction = (input: EnsureCalendarInput) => Promise<Calendar>;
+export type EnsureChatAction = (input: EnsureChatInput) => Promise<Chat>;
 export type TelegramBotDependencies = {
-  database: Kysely<Database>; brain: BotBrain; ensureUser: EnsureUserAction; ensureCalendar: EnsureCalendarAction;
+  database: Kysely<Database>; brain: BotBrain; ensureUser: EnsureUserAction; ensureChat: EnsureChatAction;
   telegram: TelegramGateway; defaultTimezone: string; logger: Logger; queue?: KeyedSerialQueue;
 };
 
@@ -29,10 +29,10 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
       telegramUsername: context.from.username ?? null, firstName: context.from.first_name,
       lastName: context.from.last_name ?? null, defaultTimezone: dependencies.defaultTimezone,
     });
-    const calendar = await dependencies.ensureCalendar(isPrivate
+    const chat = await dependencies.ensureChat(isPrivate
       ? { type: 'personal', userId: user.id, timezone: user.timezone }
       : { type: 'group', telegramChatId: context.chat.id, title: context.chat.title, timezone: dependencies.defaultTimezone });
-    return { user, calendar };
+    return { user, chat };
   }
 
   bot.on('message', async (context) => {
@@ -43,15 +43,15 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
     if (!text && !isPrivate) return;
     await queue.run(`chat:${chatId}`, async () => {
       try {
-        const { user, calendar } = await identify(context);
+        const { user, chat } = await identify(context);
         const metadata = { messageId: context.message.message_id,
           replyToMessageId: context.message.reply_to_message?.message_id };
         if (!text) {
-          await dependencies.brain.handleMessage(JSON.stringify({ received: 'non_text_message' }), user, calendar,
+          await dependencies.brain.handleMessage(JSON.stringify({ received: 'non_text_message' }), user, chat,
             chatId, context.chat.type, { ...metadata, serviceReason: 'Only text input is currently supported. Explain this to the user.' });
           return;
         }
-        const inserted = await dependencies.brain.rememberMessage(text, user, calendar, metadata);
+        const inserted = await dependencies.brain.rememberMessage(text, user, chat, metadata);
         if (!inserted) return;
         const request = isPrivate ? text : extractGroupRequest({ text,
           entities: context.message.entities ?? context.message.caption_entities ?? [],
@@ -59,7 +59,7 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           botUsername: context.me.username,
         });
         if (request === null) return;
-        await dependencies.brain.handleMessage(request, user, calendar, chatId, context.chat.type, { ...metadata, stored: true });
+        await dependencies.brain.handleMessage(request, user, chat, chatId, context.chat.type, { ...metadata, stored: true });
       } catch (error) {
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram message processing failed');
       }
@@ -74,18 +74,18 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
     const data = context.callbackQuery.data;
     await queue.run(`chat:${chatId}`, async () => {
       try {
-        const { calendar } = await identify(context);
+        const { chat } = await identify(context);
         const readiness = /^ready:(\d+):(\d+):([01])$/.exec(data);
         if (readiness) {
           const id = Number(readiness[1]);
           const version = Number(readiness[2]);
           if (!Number.isSafeInteger(id) || !Number.isSafeInteger(version)) return;
-          const accepted = await enqueueReadinessAnswer(dependencies.database, calendar.id, messageId, id, version, readiness[3] === '1');
+          const accepted = await enqueueReadinessAnswer(dependencies.database, chat.id, messageId, id, version, readiness[3] === '1');
           if (accepted) await dependencies.telegram.clearButtons(chatId, messageId);
           return;
         }
         const page = /^list:(\d+)$/.exec(data);
-        if (page) await requestListPage(dependencies.database, calendar.id, messageId, Number(page[1]));
+        if (page) await requestListPage(dependencies.database, chat.id, messageId, Number(page[1]));
       } catch (error) {
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram callback processing failed');
       }

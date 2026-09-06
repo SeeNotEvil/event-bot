@@ -19,7 +19,7 @@ export function createCreateEventsTool(database: Kysely<Database>) {
     output: createEventsOutputSchema,
     execute: (context, input) => {
       if (context.userId === null) throw new Error('Creating tasks requires a user request');
-      return createEvents(database, context.calendarId, context.userId, input);
+      return createEvents(database, context.chatId, context.userId, input);
     },
   });
 }

@@ -1,11 +1,11 @@
 import { DateTime } from 'luxon';
 import type { Kysely } from 'kysely';
 import type { Logger } from 'pino';
-import { appendMessage, getRecentMessages, type MessageMetadata } from '../application/conversations/conversationHistory.js';
 import { getRescheduleReplyContext } from '../application/notifications/readiness.js';
-import { getUserPreferences } from '../application/users/userPreferences.js';
+import type { ThreadMemory, MessageMetadata } from '../application/memory/ThreadMemory.js';
+import type { MemoryContextBuilder } from '../application/memory/MemoryContextBuilder.js';
 import type { Database } from '../db/types.js';
-import type { AgentContext, AgentTrigger, Calendar, TelegramChatType, User } from '../types/domain.js';
+import type { AgentContext, AgentTrigger, Chat, ConversationMessage, TelegramChatType, User } from '../types/domain.js';
 import type { AgentRuntime, AgentRunResult } from './AgentRuntime.js';
 
 export type Clock = () => DateTime;
@@ -13,71 +13,72 @@ export type Clock = () => DateTime;
 export class BotBrain {
   public constructor(
     private readonly database: Kysely<Database>, private readonly runtime: AgentRuntime,
-    private readonly historyLimit: number, private readonly logger: Logger,
-    private readonly clock: Clock = () => DateTime.now(),
+    private readonly threads: ThreadMemory, private readonly memoryBuilder: MemoryContextBuilder,
+    private readonly logger: Logger, private readonly clock: Clock = () => DateTime.now(),
   ) {}
 
-  public async rememberMessage(message: string, user: User, calendar: Calendar, metadata: MessageMetadata): Promise<boolean> {
-    return appendMessage(this.database, calendar.id, user.id, { role: 'user', content: message }, this.historyLimit,
-      { ...metadata, authorName: calendar.type === 'group' ? user.displayName : undefined });
+  public async rememberMessage(message: string, user: User, chat: Chat, metadata: MessageMetadata): Promise<boolean> {
+    const thread = await this.threads.ensure(chat.id);
+    return this.threads.append(thread.id, user.id, { role: 'user', content: message },
+      { ...metadata, authorName: chat.type === 'group' ? user.displayName : undefined });
   }
 
-  public async handleMessage(message: string, user: User, calendar: Calendar, telegramChatId: number,
+  public async handleMessage(message: string, user: User, chat: Chat, telegramChatId: number,
     telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string } = {},
   ): Promise<AgentRunResult> {
-    const [history, preferences] = await Promise.all([
-      getRecentMessages(this.database, calendar.id, this.historyLimit, metadata.messageId),
-      getUserPreferences(this.database, user.id),
-    ]);
-    if (!metadata.stored) await this.rememberMessage(message, user, calendar, metadata);
-    const now = this.clock().setZone(calendar.timezone).toISO({ suppressMilliseconds: true });
-    if (!now) throw new Error('Invalid calendar timezone');
+    // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
+    const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
+    if (!metadata.stored) await this.rememberMessage(message, user, chat, metadata);
+    let sourceQuery = this.database.selectFrom('conversation_messages').select('id')
+      .where('thread_id', '=', threadId).where('user_id', '=', user.id).where('role', '=', 'user');
+    if (metadata.messageId !== undefined) sourceQuery = sourceQuery.where('telegram_message_id', '=', metadata.messageId);
+    const source = await sourceQuery.orderBy('id', 'desc').executeTakeFirstOrThrow();
+    const now = this.clock().setZone(chat.timezone).toISO({ suppressMilliseconds: true });
+    if (!now) throw new Error('Invalid chat timezone');
     const trigger = metadata.serviceReason ? { kind: 'service' as const, reason: metadata.serviceReason }
       : metadata.replyToMessageId === undefined ? undefined
-      : await getRescheduleReplyContext(this.database, calendar.id, metadata.replyToMessageId);
+      : await getRescheduleReplyContext(this.database, chat.id, metadata.replyToMessageId);
     const context: AgentContext = {
-      userId: user.id, calendarId: calendar.id, calendarType: calendar.type, calendarTitle: calendar.title,
+      userId: user.id, chatId: chat.id, threadId, memory, sourceMessageId: Number(source.id), chatType: chat.type, chatTitle: chat.title,
       telegramUserId: user.telegramUserId, telegramChatId, telegramChatType,
       firstName: user.firstName, displayName: user.displayName, telegramUsername: user.telegramUsername,
-      userPreferences: preferences, timezone: calendar.timezone, now, trigger,
+      userPreferences: chat.type === 'personal' ? memory.profile?.content ?? null : null, timezone: chat.timezone, now, trigger,
     };
-    return this.run(calendar.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
+    return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }
 
-  public async handleBackground(calendarId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'listClaimToken' | 'mentionRecipient'> = {}) {
-    const row = await this.database.selectFrom('calendars').leftJoin('users', 'users.id', 'calendars.user_id')
-      .select(['calendars.type', 'calendars.title', 'calendars.timezone', 'calendars.telegram_chat_id as group_chat',
+  public async handleBackground(chatId: number, trigger: AgentTrigger, hooks: Pick<AgentContext, 'beforeStep' | 'listClaimToken' | 'mentionRecipient'> = {}) {
+    const row = await this.database.selectFrom('chats').leftJoin('users', 'users.id', 'chats.user_id')
+      .select(['chats.type', 'chats.title', 'chats.timezone', 'chats.telegram_chat_id as group_chat',
         'users.id as owner_id', 'users.telegram_chat_id as personal_chat', 'users.first_name'])
-      .where('calendars.id', '=', calendarId).executeTakeFirstOrThrow();
-    const chatId = row.type === 'group' ? row.group_chat : row.personal_chat;
-    if (chatId === null) throw new Error('Calendar has no Telegram destination');
-    const [history, preferences] = await Promise.all([
-      getRecentMessages(this.database, calendarId, this.historyLimit),
-      row.type === 'personal' && row.owner_id !== null ? getUserPreferences(this.database, Number(row.owner_id)) : Promise.resolve(null),
-    ]);
+      .where('chats.id', '=', chatId).executeTakeFirstOrThrow();
+    const destination = row.type === 'group' ? row.group_chat : row.personal_chat;
+    if (destination === null) throw new Error('Chat has no Telegram destination');
+    const { history, memory, threadId } = await this.memoryBuilder.build({ id: chatId, type: row.type,
+      userId: row.owner_id === null ? null : Number(row.owner_id) }, JSON.stringify(trigger));
     const now = this.clock().setZone(row.timezone).toISO({ suppressMilliseconds: true });
-    if (!now) throw new Error('Invalid calendar timezone');
+    if (!now) throw new Error('Invalid chat timezone');
     const context: AgentContext = {
-      userId: null, calendarId, calendarType: row.type, calendarTitle: row.title,
-      telegramUserId: null, telegramChatId: Number(chatId), telegramChatType: row.type === 'group' ? 'supergroup' : 'private',
+      userId: null, chatId, threadId, memory, chatType: row.type, chatTitle: row.title,
+      telegramUserId: null, telegramChatId: Number(destination), telegramChatType: row.type === 'group' ? 'supergroup' : 'private',
       firstName: row.type === 'personal' ? row.first_name : null, displayName: null, telegramUsername: null,
-      userPreferences: preferences, timezone: row.timezone, now, trigger, ...hooks,
+      userPreferences: row.type === 'personal' ? memory.profile?.content ?? null : null, timezone: row.timezone, now, trigger, ...hooks,
     };
     const result = await this.run(JSON.stringify({ scheduled_event: trigger }), history, context);
     return { ...result, messageId: context.outgoingMessageId };
   }
 
-  private async run(message: string, history: Awaited<ReturnType<typeof getRecentMessages>>, context: AgentContext): Promise<AgentRunResult> {
+  private async run(message: string, history: ConversationMessage[], context: AgentContext): Promise<AgentRunResult> {
     const result = await this.runtime.run(message, history, context);
     try {
-      await appendMessage(this.database, context.calendarId, context.userId,
-        { role: 'assistant', content: result.transcript }, this.historyLimit,
+      await this.threads.append(context.threadId, context.userId,
+        { role: 'assistant', content: result.transcript },
         { messageId: context.outgoingMessageId, authorName: 'Ираида' });
     } catch (error) {
       // Delivery already succeeded; a history failure must not resend the reply.
-      this.logger.error({ error, calendarId: context.calendarId }, 'Failed to save agent reply in history');
+      this.logger.error({ error, chatId: context.chatId }, 'Failed to save agent reply in history');
     }
-    this.logger.info({ userId: context.userId, calendarId: context.calendarId, steps: result.steps, terminalTool: result.terminalTool }, 'Agent run completed');
+    this.logger.info({ userId: context.userId, chatId: context.chatId, steps: result.steps, terminalTool: result.terminalTool }, 'Agent run completed');
     return result;
   }
 }

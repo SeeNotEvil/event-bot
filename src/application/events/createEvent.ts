@@ -6,11 +6,11 @@ import type { CreateEventInput } from './schemas.js';
 
 export async function createEvent(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   createdByUserId: number,
   rawInput: CreateEventInput,
 ): Promise<EventDto> {
-  const result = await createEvents(database, calendarId, createdByUserId, {
+  const result = await createEvents(database, chatId, createdByUserId, {
     events: [rawInput],
   });
   const event = result.events[0];

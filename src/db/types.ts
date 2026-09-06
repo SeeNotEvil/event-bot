@@ -3,7 +3,7 @@ import type { ColumnType, Generated } from 'kysely';
 type CreatedTimestamp = Generated<string>;
 type UpdatedTimestamp = ColumnType<string, string | Date | undefined, string | Date>;
 type DateTimeColumn = ColumnType<string, string | Date, string | Date>;
-type CalendarIdColumn = ColumnType<number | null, number, number | null>;
+type ChatIdColumn = ColumnType<number | null, number, number | null>;
 type NullableDateTimeColumn = ColumnType<
   string | null,
   string | Date | null | undefined,
@@ -22,7 +22,7 @@ export interface UsersTable {
   updated_at: UpdatedTimestamp;
 }
 
-export interface CalendarsTable {
+export interface ChatsTable {
   id: Generated<number>;
   type: 'personal' | 'group';
   user_id: number | null;
@@ -36,7 +36,7 @@ export interface CalendarsTable {
 export interface EventsTable {
   id: Generated<number>;
   user_id: number;
-  calendar_id: CalendarIdColumn;
+  chat_id: ChatIdColumn;
   title: string;
   description: string | null;
   date_from: string | null;
@@ -54,7 +54,7 @@ export interface EventsTable {
 export interface ConversationMessagesTable {
   id: Generated<number>;
   user_id: number | null;
-  calendar_id: CalendarIdColumn;
+  thread_id: ChatIdColumn;
   role: 'user' | 'assistant';
   content: string;
   telegram_message_id: Generated<number | null>;
@@ -63,10 +63,31 @@ export interface ConversationMessagesTable {
   created_at: CreatedTimestamp;
 }
 
-export interface UserPreferencesTable {
-  user_id: number;
+export interface MemoriesTable {
+  id: Generated<number>;
+  namespace: 'user' | 'chat';
+  user_id: number | null;
+  chat_id: number | null;
+  memory_key: string;
+  kind: 'semantic' | 'episodic' | 'procedural';
   content: string;
+  source_message_id: number | null;
+  source: string;
+  version: Generated<number>;
   created_at: CreatedTimestamp;
+  updated_at: UpdatedTimestamp;
+}
+
+export interface ThreadsTable {
+  id: Generated<number>;
+  chat_id: number;
+  summary: Generated<string | null>;
+  summary_cursor: Generated<number>;
+  summary_version: Generated<number>;
+  lock_token: Generated<string | null>;
+  locked_at: NullableDateTimeColumn;
+  retry_at: NullableDateTimeColumn;
+  last_error: Generated<string | null>;
   updated_at: UpdatedTimestamp;
 }
 
@@ -93,8 +114,8 @@ export interface NotificationsTable {
   updated_at: UpdatedTimestamp;
 }
 
-export interface CalendarListsTable {
-  calendar_id: number;
+export interface ChatListsTable {
+  chat_id: number;
   revision: Generated<number>;
   published_revision: Generated<number>;
   page: Generated<number>;
@@ -108,10 +129,11 @@ export interface CalendarListsTable {
 
 export interface Database {
   users: UsersTable;
-  calendars: CalendarsTable;
+  chats: ChatsTable;
   events: EventsTable;
   conversation_messages: ConversationMessagesTable;
-  user_preferences: UserPreferencesTable;
+  threads: ThreadsTable;
+  memories: MemoriesTable;
   notifications: NotificationsTable;
-  calendar_lists: CalendarListsTable;
+  chat_lists: ChatListsTable;
 }

@@ -19,7 +19,7 @@ function escapeLikePattern(value: string): string {
 
 export async function searchSchedule(
   database: Kysely<Database>,
-  calendarId: number,
+  chatId: number,
   timezone: string,
   rawInput: SearchScheduleInput,
 ): Promise<SearchScheduleOutput> {
@@ -44,7 +44,7 @@ export async function searchSchedule(
     .innerJoin('users as event_creator', 'event_creator.id', 'events.user_id')
     .selectAll('events')
     .select('event_creator.first_name as creator_first_name')
-    .where('events.calendar_id', '=', calendarId)
+    .where('events.chat_id', '=', chatId)
     .where('events.status', 'in', eventStatuses);
 
   if (input.query !== null) {
@@ -117,7 +117,7 @@ export async function searchSchedule(
       'notifications.source',
       'events.title as event_title',
     ])
-    .where('events.calendar_id', '=', calendarId)
+    .where('events.chat_id', '=', chatId)
     .where('notifications.kind', '!=', 'readiness_response')
     .where('notifications.event_id', 'in', eventIds)
     .where('notifications.status', 'in', reminderStatuses);
