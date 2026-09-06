@@ -11,7 +11,7 @@ function entity(
 }
 
 describe('group message addressing', () => {
-  it('recognizes a leading name without replying to ordinary discussion, similar names or quoted text', () => {
+  it('recognizes a direct leading name while excluding ordinary discussion, similar names and quoted text', () => {
     const cases: [string, string | null][] = [
       ['Мэй, покажи список', 'покажи список'],
       ['Мэй Мэй, напомни завтра', 'напомни завтра'],
@@ -42,7 +42,7 @@ describe('group message addressing', () => {
       expect(request).toBe(mention.endsWith('_other') ? null : 'добавь это в список');
     }
   });
-  it('ignores ambient chat and extracts supported invocations', () => {
+  it('distinguishes explicit invocations from messages requiring conversational context', () => {
     const mention = '👋 @MeiMeiAssistantBot, запиши встречу завтра';
     const command = '/iraida@MeiMeiAssistantBot что у нас на неделе?';
 

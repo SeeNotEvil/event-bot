@@ -13,6 +13,7 @@ import {
 import { defineTool } from '../../src/agent/tools/Tool.js';
 import { ToolRegistry } from '../../src/agent/tools/ToolRegistry.js';
 import { ToolRuntime } from '../../src/agent/tools/ToolRuntime.js';
+import { createSkipReplyTool } from '../../src/agent/tools/skipReply.tool.js';
 import type { AgentContext } from '../../src/types/domain.js';
 import { silentLogger } from '../helpers.js';
 
@@ -127,6 +128,26 @@ describe('AgentRuntime', () => {
         }),
       ]),
     );
+  });
+
+  it('allows a silent terminal result only for group messages without a direct address', async () => {
+    const registry = new ToolRegistry().register(createSkipReplyTool());
+    const toolRuntime = new ToolRuntime(registry, silentLogger);
+    const groupContext: AgentContext = { ...context, chatType: 'group',
+      groupMessage: { directlyAddressed: false, replyTo: null } };
+    for (const deniedContext of [context,
+      { ...groupContext, groupMessage: { directlyAddressed: true, replyTo: null } },
+      { ...groupContext, trigger: { kind: 'notification' as const, notificationId: 1, eventId: 2,
+        deadlineVersion: 1, notificationKind: 'reminder' as const, answer: null } },
+    ]) {
+      await expect(toolRuntime.execute('skip_reply', {}, deniedContext))
+        .resolves.toMatchObject({ ok: false, terminal: false, output: { error: { code: 'INVALID_CONTEXT' } } });
+    }
+    const client = new ScriptedClient([response(toolCall('skip_reply', 'skip', {}))]);
+    const runtime = new AgentRuntime(client, registry, toolRuntime, 'gpt-5.4-mini', 16_384, 3, silentLogger);
+    await expect(runtime.run('Разговор участников', [], groupContext))
+      .resolves.toEqual({ terminalTool: 'skip_reply', transcript: null, steps: 1 });
+    expect(client.requests).toHaveLength(1);
   });
 
   it('returns validation failures to the model so it can recover', async () => {

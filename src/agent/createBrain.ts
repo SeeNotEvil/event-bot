@@ -23,6 +23,7 @@ import { createSearchNotificationsTool } from './tools/searchNotifications.tool.
 import { createDeleteNotificationTool } from './tools/deleteNotification.tool.js';
 import { createSaveUserPreferencesTool } from './tools/saveUserPreferences.tool.js';
 import { createSendMessageTool } from './tools/sendMessage.tool.js';
+import { createSkipReplyTool } from './tools/skipReply.tool.js';
 import { createSearchChatMembersTool, createSetReminderRecipientTool } from './tools/reminderRecipient.tools.js';
 import { createReadEventTool, createReadTaskListTool, createReadChatMessagesTool,
   createConfigureNotificationsTool, createRecordReadinessTool } from './tools/workflow.tools.js';
@@ -42,7 +43,7 @@ export function createBrain(database: Kysely<Database>, telegram: TelegramGatewa
     .register(createCreateNotificationTool(database)).register(createSearchNotificationsTool(database))
     .register(createDeleteNotificationTool(database)).register(createConfigureNotificationsTool(database))
     .register(createRecordReadinessTool(database)).register(createSaveUserPreferencesTool(database))
-    .register(createSendMessageTool(database, telegram));
+    .register(createSendMessageTool(database, telegram)).register(createSkipReplyTool());
   const runtime = new AgentRuntime(client, registry, new ToolRuntime(registry, logger),
     config.openai.model, config.openai.maxOutputTokens, config.maxAgentSteps, logger);
   return new BotBrain(database, runtime, threads, memoryBuilder, logger, clock);

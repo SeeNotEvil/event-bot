@@ -24,7 +24,7 @@ export class BotBrain {
   }
 
   public async handleMessage(message: string, user: User, chat: Chat, telegramChatId: number,
-    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[] } = {},
+    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[]; groupMessage?: AgentContext['groupMessage'] } = {},
   ): Promise<AgentRunResult> {
     // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
     const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
@@ -44,6 +44,7 @@ export class BotBrain {
       firstName: user.firstName, displayName: user.displayName, telegramUsername: user.telegramUsername,
       userPreferences: chat.type === 'personal' ? memory.profile?.content ?? null : null, timezone: chat.timezone, now, trigger,
       recipientReferences: metadata.recipientReferences ?? [],
+      groupMessage: metadata.groupMessage,
     };
     return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }
@@ -71,13 +72,15 @@ export class BotBrain {
 
   private async run(message: string, history: ConversationMessage[], context: AgentContext): Promise<AgentRunResult> {
     const result = await this.runtime.run(message, history, context);
-    try {
-      await this.threads.append(context.threadId, context.userId,
-        { role: 'assistant', content: result.transcript },
-        { messageId: context.outgoingMessageId, authorName: 'Мэй Мэй' });
-    } catch (error) {
-      // Delivery already succeeded; a history failure must not resend the reply.
-      this.logger.error({ error, chatId: context.chatId }, 'Failed to save agent reply in history');
+    if (result.terminalTool === 'send_message') {
+      try {
+        await this.threads.append(context.threadId, context.userId,
+          { role: 'assistant', content: result.transcript },
+          { messageId: context.outgoingMessageId, authorName: 'Мэй Мэй' });
+      } catch (error) {
+        // Delivery already succeeded; a history failure must not resend the reply.
+        this.logger.error({ error, chatId: context.chatId }, 'Failed to save agent reply in history');
+      }
     }
     this.logger.info({ userId: context.userId, chatId: context.chatId, steps: result.steps, terminalTool: result.terminalTool }, 'Agent run completed');
     return result;

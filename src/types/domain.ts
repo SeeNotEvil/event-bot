@@ -27,6 +27,10 @@ export type AgentContext = {
   timezone: string;
   now: string;
   trigger?: AgentTrigger | undefined;
+  groupMessage?: {
+    directlyAddressed: boolean;
+    replyTo: { author: string; text: string | null } | null;
+  } | undefined;
   mentionRecipient?: { id: number; firstName: string } | undefined;
   recipientReferences?: ChatMemberReference[];
   beforeStep?: () => Promise<void>;

@@ -53,7 +53,7 @@ export class ToolRuntime {
       return this.failure('INVALID_CONTEXT', 'Это действие требует текущего поручения пользователя. В фоне выполняй только текущее задание; ответ кнопки применяется через record_readiness.', false);
     }
     if (tool.availableWhen && !tool.availableWhen(context)) {
-      return this.failure('INVALID_CONTEXT', 'Инструмент недоступен для текущего фонового задания.', false);
+      return this.failure('INVALID_CONTEXT', 'Инструмент недоступен в текущем контексте.', false);
     }
 
     const input = tool.input.safeParse(rawArguments);

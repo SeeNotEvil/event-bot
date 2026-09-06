@@ -14,11 +14,10 @@ export interface ResponsesClient {
   create(parameters: ResponseCreateParamsNonStreaming): Promise<Response>;
 }
 
-export type AgentRunResult = {
-  terminalTool: 'send_message';
-  transcript: string;
-  steps: number;
-};
+export type AgentRunResult = (
+  | { terminalTool: 'send_message'; transcript: string }
+  | { terminalTool: 'skip_reply'; transcript: null }
+) & { steps: number };
 
 export class AgentProtocolError extends Error {
   public constructor(message: string) {
@@ -108,6 +107,9 @@ export class AgentRuntime {
       const result = await this.toolRuntime.execute(call.name, argumentsValue, context);
 
       if (result.ok && result.terminal) {
+        if (call.name === 'skip_reply') {
+          return { terminalTool: 'skip_reply', transcript: null, steps: step };
+        }
         if (call.name !== 'send_message') {
           throw new AgentProtocolError(`Unexpected terminal tool: ${call.name}`);
         }
