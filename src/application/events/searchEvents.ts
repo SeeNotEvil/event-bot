@@ -42,7 +42,8 @@ export async function searchEvents(
   }
 
   const rows = await query
-    .orderBy('date_from', 'asc')
+    .orderBy(sql`date_from is null`, 'asc')
+    .orderBy(sql`coalesce(date_to, date_from)`, 'asc')
     .orderBy('time', 'asc')
     .orderBy('id', 'asc')
     .limit(input.limit ?? 50)

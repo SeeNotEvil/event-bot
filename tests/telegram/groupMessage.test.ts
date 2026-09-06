@@ -11,6 +11,14 @@ function entity(
 }
 
 describe('group message addressing', () => {
+  it('recognizes the exact meimei alias without treating other mentions as requests', () => {
+    for (const alias of ['@meimei', '@MeiMei', '@meimei_other']) {
+      const text = `${alias}, добавь это в список`;
+      const request = extractGroupRequest({ text, entities: [entity(text, alias, 'mention')],
+        replyToBot: false, botUsername: 'iraida_deadline_bot' });
+      expect(request).toBe(alias === '@meimei_other' ? null : 'добавь это в список');
+    }
+  });
   it('ignores ambient chat and extracts supported invocations', () => {
     const mention = '👋 @iraida_deadline_bot, запиши встречу завтра';
     const command = '/iraida@iraida_deadline_bot что у нас на неделе?';

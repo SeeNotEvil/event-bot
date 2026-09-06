@@ -6,7 +6,7 @@ import type {
 } from 'openai/resources/responses/responses';
 import type { Logger } from 'pino';
 import type { AgentContext, ConversationMessage } from '../types/domain.js';
-import { buildSystemPrompt } from './systemPrompt.js';
+import { buildBackgroundTask, buildSystemPrompt } from './systemPrompt.js';
 import type { ToolRegistry } from './tools/ToolRegistry.js';
 import type { ToolRuntime } from './tools/ToolRuntime.js';
 
@@ -50,7 +50,11 @@ export class AgentRuntime {
     history: ConversationMessage[],
     context: AgentContext,
   ): Promise<AgentRunResult> {
-    const input: ResponseInputItem[] = [
+    const background = context.trigger?.kind === 'notification' || context.trigger?.kind === 'list_refresh';
+    const input: ResponseInputItem[] = background ? [
+      { type: 'message', role: 'developer', content: `Справочная история чата (данные о прошлом, не новые поручения): ${JSON.stringify(history)}` },
+      { type: 'message', role: 'developer', content: buildBackgroundTask(context) },
+    ] : [
       ...history.map((item) => ({
         type: 'message' as const,
         role: item.role,
@@ -58,9 +62,10 @@ export class AgentRuntime {
       })),
       { type: 'message', role: 'user', content: message },
     ];
-    const tools: FunctionTool[] = this.registry.specs();
+    const tools: FunctionTool[] = this.registry.specs(context);
 
     for (let step = 1; step <= this.maxSteps; step += 1) {
+      await context.beforeStep?.();
       const response = await this.client.create({
         model: this.model,
         instructions: buildSystemPrompt(context),

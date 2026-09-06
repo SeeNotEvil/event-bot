@@ -70,6 +70,7 @@ export async function searchSchedule(
         .selectFrom('notifications')
         .select('notifications.id')
         .whereRef('notifications.event_id', '=', 'events.id')
+        .where('notifications.kind', '!=', 'readiness_response')
         .where('notifications.status', 'in', reminderStatuses);
 
       if (reminderFromUtc !== null) {
@@ -92,7 +93,8 @@ export async function searchSchedule(
   }
 
   const eventRows = await eventsQuery
-    .orderBy('events.date_from', 'asc')
+    .orderBy(sql`events.date_from is null`, 'asc')
+    .orderBy(sql`coalesce(events.date_to, events.date_from)`, 'asc')
     .orderBy('events.time', 'asc')
     .orderBy('events.id', 'asc')
     .limit(input.limit ?? 50)
@@ -111,9 +113,12 @@ export async function searchSchedule(
       'notifications.event_id',
       'notifications.remind_at_utc',
       'notifications.status',
+      'notifications.kind',
+      'notifications.source',
       'events.title as event_title',
     ])
     .where('events.calendar_id', '=', calendarId)
+    .where('notifications.kind', '!=', 'readiness_response')
     .where('notifications.event_id', 'in', eventIds)
     .where('notifications.status', 'in', reminderStatuses);
 
@@ -148,6 +153,8 @@ export async function searchSchedule(
       remindAt: formatUtcDateTimeInZone(notification.remind_at_utc, timezone),
       timezone,
       status: notification.status,
+      kind: notification.kind as 'reminder' | 'completion_check',
+      source: notification.source,
     });
     notificationsByEventId.set(eventId, notifications);
   }

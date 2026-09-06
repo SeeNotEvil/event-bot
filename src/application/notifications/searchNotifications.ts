@@ -39,9 +39,12 @@ export async function searchNotifications(
       'notifications.remind_at_utc',
       'notifications.timezone',
       'notifications.status',
+      'notifications.kind',
+      'notifications.source',
       'events.title as event_title',
     ])
     .where('events.calendar_id', '=', calendarId)
+    .where('notifications.kind', '!=', 'readiness_response')
     .where('notifications.status', 'in', input.statuses ?? ['pending']);
 
   if (input.eventId !== null) {
@@ -76,6 +79,8 @@ export async function searchNotifications(
       remindAt: formatUtcDateTimeInZone(row.remind_at_utc, row.timezone),
       timezone: row.timezone,
       status: row.status,
+      kind: row.kind,
+      source: row.source,
     })),
   });
 }

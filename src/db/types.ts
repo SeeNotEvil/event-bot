@@ -39,21 +39,27 @@ export interface EventsTable {
   calendar_id: CalendarIdColumn;
   title: string;
   description: string | null;
-  date_from: string;
+  date_from: string | null;
   date_to: string | null;
   time: string | null;
   status: 'active' | 'completed' | 'deleted';
   completed_at: NullableDateTimeColumn;
+  deadline_version: Generated<number>;
+  reminder_mode: Generated<'legacy' | 'default' | 'custom' | 'off'>;
+  check_completion: Generated<number>;
   created_at: CreatedTimestamp;
   updated_at: UpdatedTimestamp;
 }
 
 export interface ConversationMessagesTable {
   id: Generated<number>;
-  user_id: number;
+  user_id: number | null;
   calendar_id: CalendarIdColumn;
   role: 'user' | 'assistant';
   content: string;
+  telegram_message_id: Generated<number | null>;
+  reply_to_message_id: Generated<number | null>;
+  author_name: Generated<string | null>;
   created_at: CreatedTimestamp;
 }
 
@@ -75,8 +81,29 @@ export interface NotificationsTable {
   locked_at: NullableDateTimeColumn;
   sent_at: NullableDateTimeColumn;
   last_error: string | null;
+  kind: Generated<'reminder' | 'completion_check' | 'readiness_response'>;
+  source: Generated<'manual' | 'automatic'>;
+  deadline_version: Generated<number>;
+  telegram_message_id: Generated<number | null>;
+  answer: Generated<number | null>;
+  action_applied: Generated<number>;
+  answered_at: NullableDateTimeColumn;
+  retry_at: NullableDateTimeColumn;
   created_at: CreatedTimestamp;
   updated_at: UpdatedTimestamp;
+}
+
+export interface CalendarListsTable {
+  calendar_id: number;
+  revision: Generated<number>;
+  published_revision: Generated<number>;
+  page: Generated<number>;
+  published_page: Generated<number>;
+  message_id: Generated<number | null>;
+  lock_token: Generated<string | null>;
+  locked_at: NullableDateTimeColumn;
+  retry_at: NullableDateTimeColumn;
+  last_error: Generated<string | null>;
 }
 
 export interface Database {
@@ -86,4 +113,5 @@ export interface Database {
   conversation_messages: ConversationMessagesTable;
   user_preferences: UserPreferencesTable;
   notifications: NotificationsTable;
+  calendar_lists: CalendarListsTable;
 }

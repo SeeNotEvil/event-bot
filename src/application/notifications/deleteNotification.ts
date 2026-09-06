@@ -24,10 +24,13 @@ export async function deleteNotification(
         'notifications.event_id',
         'notifications.remind_at_utc',
         'notifications.timezone',
+        'notifications.kind',
+        'notifications.source',
         'events.title as event_title',
       ])
       .where('notifications.id', '=', input.notificationId)
       .where('events.calendar_id', '=', calendarId)
+      .where('notifications.kind', '!=', 'readiness_response')
       .where('notifications.status', '=', 'pending')
       .forUpdate()
       .executeTakeFirst();
@@ -65,6 +68,8 @@ export async function deleteNotification(
         ),
         timezone: notification.timezone,
         status: 'cancelled',
+        kind: notification.kind,
+        source: notification.source,
       },
     });
   });

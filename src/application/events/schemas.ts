@@ -16,11 +16,13 @@ export const createEventInputSchema = z
   .object({
     title: z.string().trim().min(1).max(255),
     description: z.string().trim().min(1).max(65_535).nullable(),
-    dateFrom: isoDateSchema,
+    dateFrom: isoDateSchema.nullable(),
     dateTo: isoDateSchema.nullable(),
     time: localTimeSchema.nullable(),
   })
-  .refine((input) => input.dateTo === null || input.dateTo >= input.dateFrom, {
+  .refine((input) => input.dateFrom === null
+    ? input.dateTo === null && input.time === null
+    : input.dateTo === null || input.dateTo >= input.dateFrom, {
     path: ['dateTo'],
     message: 'dateTo must not be earlier than dateFrom',
   });
@@ -62,7 +64,7 @@ export const createEventsOutputSchema = z.object({
   dateRange: z.object({
     from: isoDateSchema,
     to: isoDateSchema,
-  }),
+  }).nullable(),
   events: z.array(eventSchema).min(1).max(100),
 });
 
@@ -181,7 +183,7 @@ export type CompleteEventOutput = z.infer<typeof completeEventOutputSchema>;
 export const rescheduleEventInputSchema = z
   .object({
     eventId: eventIdSchema,
-    dateFrom: isoDateSchema,
+    dateFrom: isoDateSchema.nullable(),
     dateTo: isoDateSchema.nullable(),
     time: localTimeSchema.nullable(),
     reminderTimes: z
@@ -189,9 +191,11 @@ export const rescheduleEventInputSchema = z
       .max(20)
       .refine((reminderTimes) => new Set(reminderTimes).size === reminderTimes.length, {
         message: 'reminderTimes must be unique',
-      }),
+      }).nullable(),
   })
-  .refine((input) => input.dateTo === null || input.dateTo >= input.dateFrom, {
+  .refine((input) => input.dateFrom === null
+    ? input.dateTo === null && input.time === null
+    : input.dateTo === null || input.dateTo >= input.dateFrom, {
     path: ['dateTo'],
     message: 'dateTo must not be earlier than dateFrom',
   });
@@ -203,6 +207,7 @@ export const rescheduleEventFailureReasonSchema = z.enum([
   'INVALID_LOCAL_TIME',
   'REMINDER_NOT_IN_FUTURE',
   'REMINDER_TIME_ALREADY_SENT',
+  'CUSTOM_REMINDER_TIMES_REQUIRED',
 ]);
 
 export type RescheduleEventFailureReason = z.infer<
@@ -219,7 +224,7 @@ export const rescheduleEventOutputSchema = z.discriminatedUnion('success', [
     success: z.literal(true),
     changed: z.boolean(),
     event: activeEventSchema,
-    notifications: z.array(pendingNotificationSchema).max(20),
+    notifications: z.array(pendingNotificationSchema).max(21),
     cancelledNotificationCount: z.number().int().min(0),
   }),
   z.object({

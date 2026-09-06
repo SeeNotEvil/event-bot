@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
 import { mapEvent } from './mapEvent.js';
+import { touchCalendarList } from '../schedule/calendarList.js';
 import {
   completeEventInputSchema,
   completeEventOutputSchema,
@@ -67,6 +68,7 @@ export async function completeEvent(
       [input.eventId],
       now,
     );
+    await touchCalendarList(transaction, calendarId);
     const completedEvent = await transaction
       .selectFrom('events')
       .selectAll()

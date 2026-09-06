@@ -1,16 +1,16 @@
 import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DateTime } from 'luxon';
 import { Api } from 'grammy';
 import OpenAI from 'openai';
-import { ReminderTextGenerator } from './agent/ReminderTextGenerator.js';
+import { createBrain } from './agent/createBrain.js';
+import { claimCalendarList, renewListClaim, releaseListClaim, StaleAgentTask } from './application/schedule/calendarList.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
 import { createLogger } from './logger.js';
-import { formatEventReminder, TelegramAdapter } from './telegram/TelegramAdapter.js';
+import { TelegramAdapter } from './telegram/TelegramAdapter.js';
 
 async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
@@ -43,11 +43,7 @@ export async function runNotificationWorker(): Promise<void> {
     timeout: Math.min(config.openai.timeoutMs, requestTimeoutMs),
     maxRetries: 0,
   });
-  const reminderTextGenerator = new ReminderTextGenerator(
-    openai.responses,
-    config.openai.model,
-    config.openai.maxOutputTokens,
-  );
+  const brain = createBrain(database, telegram, openai.responses, config, logger);
   const abortController = new AbortController();
   const stop = (signal: NodeJS.Signals): void => {
     if (abortController.signal.aborted) {
@@ -83,35 +79,17 @@ export async function runNotificationWorker(): Promise<void> {
           batchSize: config.notificationWorker.batchSize,
           lockTimeoutMs: config.notificationWorker.lockTimeoutMs,
           signal: abortController.signal,
-          prepareMessage: async (notification) => {
-            const localNow = DateTime.now().setZone(notification.timezone).toISO({
-              suppressMilliseconds: true,
-            }) ?? new Date().toISOString();
-            try {
-              return await reminderTextGenerator.generate(notification, localNow);
-            } catch (error) {
-              logger.warn(
-                {
-                  notificationId: notification.notificationId,
-                  errorType: error instanceof Error ? error.name : 'UnknownError',
-                },
-                'Reminder generation failed; using standard reminder',
-              );
-              return formatEventReminder(
-                {
-                  id: notification.eventId,
-                  title: notification.eventTitle,
-                  dateFrom: notification.eventDateFrom,
-                  dateTo: notification.eventDateTo,
-                  time: notification.eventTime,
-                },
-                localNow,
-                notification.createdByName,
-              );
-            }
-          },
-          send: async (notification, message) => {
-            await telegram.sendMessage(notification.telegramChatId, message);
+          run: async (notification, guard) => {
+            const result = await brain.handleBackground(notification.calendarId, {
+              kind: 'notification', notificationId: notification.notificationId,
+              eventId: notification.eventId, deadlineVersion: notification.deadlineVersion,
+              notificationKind: notification.kind, answer: notification.answer,
+            }, {
+              beforeStep: guard,
+              mentionRecipient: notification.calendarType === 'group'
+                ? { id: notification.createdByTelegramId, firstName: notification.createdByName } : undefined,
+            });
+            if (result.messageId === undefined) throw new Error('Agent did not deliver a notification');
           },
         });
 
@@ -120,6 +98,30 @@ export async function runNotificationWorker(): Promise<void> {
         }
       } catch (error) {
         logger.error({ error }, 'Notification batch failed');
+      }
+
+      if (!abortController.signal.aborted) {
+        try {
+          const list = await claimCalendarList(database, config.notificationWorker.lockTimeoutMs);
+          if (list) {
+            try {
+              await brain.handleBackground(Number(list.calendar_id), {
+                kind: 'list_refresh', revision: Number(list.revision), page: Number(list.page),
+              }, {
+                listClaimToken: list.token,
+                beforeStep: async () => {
+                  if (abortController.signal.aborted) throw new Error('Worker is stopping');
+                  await renewListClaim(database, Number(list.calendar_id), list.token, Number(list.revision));
+                },
+              });
+            } catch (error) {
+              await releaseListClaim(database, Number(list.calendar_id), list.token, !(error instanceof StaleAgentTask));
+              if (!(error instanceof StaleAgentTask)) logger.error({ error, calendarId: list.calendar_id }, 'Calendar list agent failed');
+            }
+          }
+        } catch (error) {
+          logger.error({ error }, 'Calendar list dispatch failed');
+        }
       }
 
       const elapsed = Date.now() - startedAt;

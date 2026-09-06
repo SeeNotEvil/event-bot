@@ -20,6 +20,8 @@ export const notificationSchema = z.object({
   remindAt: localDateTimeSchema,
   timezone: z.string().min(1).max(64),
   status: notificationStatusSchema,
+  kind: z.enum(['reminder', 'completion_check']),
+  source: z.enum(['manual', 'automatic']),
 });
 
 export type NotificationDto = z.infer<typeof notificationSchema>;

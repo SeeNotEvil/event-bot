@@ -11,7 +11,7 @@ import { createSearchEventsTool } from '../../src/agent/tools/searchEvents.tool.
 import { createSearchNotificationsTool } from '../../src/agent/tools/searchNotifications.tool.js';
 import { createRescheduleEventTool } from '../../src/agent/tools/rescheduleEvent.tool.js';
 import { createSearchScheduleTool } from '../../src/agent/tools/searchSchedule.tool.js';
-import { createSendEventListTool } from '../../src/agent/tools/sendEventList.tool.js';
+import { createSendMessageTool } from '../../src/agent/tools/sendMessage.tool.js';
 import { createSaveUserPreferencesTool } from '../../src/agent/tools/saveUserPreferences.tool.js';
 import { ToolRegistry } from '../../src/agent/tools/ToolRegistry.js';
 import { ToolRuntime } from '../../src/agent/tools/ToolRuntime.js';
@@ -160,10 +160,7 @@ describe('ToolRegistry and ToolRuntime', () => {
       additionalProperties: false,
       required: ['eventId', 'dateFrom', 'dateTo', 'time', 'reminderTimes'],
       properties: {
-        reminderTimes: {
-          type: 'array',
-          maxItems: 20,
-        },
+        reminderTimes: { anyOf: [{ type: 'array', items: { type: 'string' }, maxItems: 20 }, { type: 'null' }] },
       },
     });
     expect(specs[6]?.parameters).toMatchObject({
@@ -196,39 +193,24 @@ describe('ToolRegistry and ToolRuntime', () => {
     expect(JSON.stringify(specs[10]?.parameters)).toContain('"maxLength":4000');
   });
 
-  it('passes event authors from schedule data to the event-list adapter', async () => {
-    const sendEventList = vi.fn(async () => 'События\n\n12 сентября\nИван — Стоматолог');
-    const telegram: TelegramGateway = {
-      sendMessage: vi.fn(async (_chatId: number, text: string) => text),
-      sendEventReminder: vi.fn(async () => 'Напоминание'),
-      sendEventList,
-    };
-    const tool = createSendEventListTool(telegram);
-    const registry = new ToolRegistry().register(tool);
+  it('prevents a background run from replaying a user mutation', async () => {
+    const transaction = vi.fn();
+    const database = { transaction } as unknown as Kysely<Database>;
+    const registry = new ToolRegistry().register(createDeleteEventTool(database));
     const runtime = new ToolRuntime(registry, silentLogger);
-    const events = [
-      {
-        id: 17,
-        title: 'Стоматолог',
-        description: null,
-        dateFrom: '2026-09-12',
-        dateTo: null,
-        time: null,
-        status: 'active' as const,
-        completedAt: null,
-        createdByName: 'Иван',
-        notifications: [],
-      },
-    ];
+    await expect(runtime.execute('delete_event', { eventId: 42 }, { ...context, userId: null }))
+      .resolves.toMatchObject({ ok: false, output: { error: { code: 'INVALID_CONTEXT', retryable: false } } });
+    expect(transaction).not.toHaveBeenCalled();
+  });
 
-    await expect(
-      runtime.execute('send_event_list', { title: 'События', events }, context),
-    ).resolves.toMatchObject({ ok: true, terminal: true });
-    expect(sendEventList).toHaveBeenCalledWith(
-      context.telegramChatId,
-      'События',
-      events,
-      context.now,
-    );
+  it('delivers the complete agent-authored text without adding a template', async () => {
+    const sendText = vi.fn(async () => 42);
+    const telegram: TelegramGateway = { sendText, editText: vi.fn(), clearButtons: vi.fn() };
+    const registry = new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram));
+    const runtime = new ToolRuntime(registry, silentLogger);
+    const text = 'Иван, позвольте напомнить: «Стоматолог» — 12 сентября, 18:00.';
+    await expect(runtime.execute('send_message', { text, mentionText: null }, { ...context }))
+      .resolves.toMatchObject({ ok: true, terminal: true, transcript: text });
+    expect(sendText).toHaveBeenCalledWith(context.telegramChatId, text, {});
   });
 });

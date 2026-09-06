@@ -11,7 +11,12 @@ import { rescheduleEvent } from '../../src/application/events/rescheduleEvent.js
 import { searchEvents } from '../../src/application/events/searchEvents.js';
 import { createNotification } from '../../src/application/notifications/createNotification.js';
 import { deleteNotification } from '../../src/application/notifications/deleteNotification.js';
-import { processDueNotifications } from '../../src/application/notifications/processDueNotifications.js';
+import { processDueNotifications, type DueNotification } from '../../src/application/notifications/processDueNotifications.js';
+import { configureNotifications } from '../../src/application/notifications/configureNotifications.js';
+import { enqueueReadinessAnswer, recordReadiness, getRescheduleReplyContext } from '../../src/application/notifications/readiness.js';
+import { readTaskList, publishCalendarList, requestListPage, claimCalendarList, releaseListClaim, touchCalendarList } from '../../src/application/schedule/calendarList.js';
+import type { TelegramGateway } from '../../src/telegram/TelegramAdapter.js';
+import type { AgentContext } from '../../src/types/domain.js';
 import { searchNotifications } from '../../src/application/notifications/searchNotifications.js';
 import { searchSchedule } from '../../src/application/schedule/searchSchedule.js';
 import { ensureUser } from '../../src/application/users/ensureUser.js';
@@ -325,7 +330,7 @@ describeWithMysql('MySQL application actions', () => {
         throw new Error('Expected course reschedule to succeed');
       }
       expect(movedCourse.notifications.map((notification) => notification.remindAt)).toEqual(
-        replacementTimes,
+        [...replacementTimes, '2035-10-23T10:00'],
       );
 
       const cancelledOldCourseReminders = await searchNotifications(
@@ -388,8 +393,8 @@ describeWithMysql('MySQL application actions', () => {
       ).resolves.toMatchObject({
         success: true,
         changed: true,
-        notifications: [],
-        cancelledNotificationCount: 2,
+        notifications: [{ remindAt: '2035-10-24T10:00' }],
+        cancelledNotificationCount: 3,
       });
 
       const firstReminderResult = await createNotification(
@@ -483,8 +488,8 @@ describeWithMysql('MySQL application actions', () => {
         },
       );
       expect(eventsOnDentistDate.events.map((event) => event.title)).toEqual([
-        'Забрать документы',
         'Стоматолог',
+        'Забрать документы',
       ]);
       expect(
         eventsOnDentistDate.events.find((event) => event.id === documents.id)?.notifications,
@@ -558,7 +563,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [secondReminderResult.notification.id],
-          prepareMessage: async () => {
+          run: async (_notification, guard) => {
             // The user cancels while the model is composing the reminder.
             await expect(
               deleteNotification(database, firstCalendar.id, {
@@ -568,9 +573,9 @@ describeWithMysql('MySQL application actions', () => {
               success: true,
               notification: { status: 'cancelled' },
             });
-            return 'Prepared reminder';
+            await guard();
+            await cancelledDelivery();
           },
-          send: cancelledDelivery,
         }),
       ).resolves.toEqual({ claimed: 1, sent: 0, failed: 0, skipped: 1 });
       expect(cancelledDelivery).not.toHaveBeenCalled();
@@ -594,18 +599,15 @@ describeWithMysql('MySQL application actions', () => {
       const failedDelivery = vi.fn(async () => {
         throw new Error('Temporary Telegram failure');
       });
-      const prepareMessage = vi.fn(async () => 'Prepared reminder');
       await expect(
         processDueNotifications(database, {
           now: new Date('2035-09-05T07:30:00.000Z'),
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
-          prepareMessage,
-          send: failedDelivery,
+          run: async (_notification, guard) => { await guard(); await failedDelivery(); },
         }),
       ).resolves.toEqual({ claimed: 1, sent: 0, failed: 1, skipped: 0 });
-      expect(prepareMessage).toHaveBeenCalledTimes(1);
       expect(failedDelivery).toHaveBeenCalledTimes(1);
 
       const failedRow = await database
@@ -620,15 +622,16 @@ describeWithMysql('MySQL application actions', () => {
       });
       expect(failedRow.last_error).toContain('Temporary Telegram failure');
 
-      const delivered = vi.fn(async () => undefined);
+      await database.updateTable('notifications').set({ retry_at: null })
+        .where('id', '=', firstReminderResult.notification.id).execute();
+      const delivered = vi.fn<(notification: DueNotification) => Promise<void>>(async () => undefined);
       await expect(
         processDueNotifications(database, {
           now: new Date('2035-09-05T07:31:00.000Z'),
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
-          prepareMessage,
-          send: delivered,
+          run: async (notification, guard) => { await guard(); await delivered(notification); },
         }),
       ).resolves.toEqual({ claimed: 1, sent: 1, failed: 0, skipped: 0 });
       expect(delivered).toHaveBeenCalledWith(
@@ -641,7 +644,6 @@ describeWithMysql('MySQL application actions', () => {
           calendarType: 'personal',
           recipientFirstName: 'Иван',
         }),
-        'Prepared reminder',
       );
 
       await expect(
@@ -650,8 +652,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
-          prepareMessage,
-          send: delivered,
+          run: async (notification, guard) => { await guard(); await delivered(notification); },
         }),
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
       await expect(
@@ -968,8 +969,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [pendingReminder.notification.id],
-          prepareMessage: async () => 'Prepared reminder',
-          send,
+          run: async (_notification, guard) => { await guard(); await send(); },
         }),
       ).resolves.toEqual({ claimed: 0, sent: 0, failed: 0, skipped: 0 });
       expect(send).not.toHaveBeenCalled();
@@ -1216,14 +1216,13 @@ describeWithMysql('MySQL application actions', () => {
         throw new Error('Expected the group reminder to be created');
       }
 
-      const send = vi.fn(async () => undefined);
+      const send = vi.fn<(notification: DueNotification) => Promise<void>>(async () => undefined);
       await processDueNotifications(database, {
         now: new Date('2037-03-11T07:01:00.000Z'),
         batchSize: 10,
         lockTimeoutMs: 60_000,
         notificationIds: [reminder.notification.id],
-        prepareMessage: async () => 'Prepared reminder',
-        send,
+        run: async (notification, guard) => { await guard(); await send(notification); },
       });
       expect(send).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1234,7 +1233,6 @@ describeWithMysql('MySQL application actions', () => {
           recipientFirstName: null,
           recipientPreferences: null,
         }),
-        'Prepared reminder',
       );
     } finally {
       await database
@@ -1247,4 +1245,130 @@ describeWithMysql('MySQL application actions', () => {
         .execute();
     }
   });
+  it('edits one paginated list and keeps changes made during publication queued', async () => {
+    const unique = Date.now() + 2000;
+    const owner = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Автор списка', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const calendar = await ensureCalendar(database, { type: 'personal', userId: owner.id, timezone: owner.timezone });
+    const sendText = vi.fn(async () => 500);
+    const editText = vi.fn<TelegramGateway['editText']>(async () => undefined);
+    const telegram: TelegramGateway = { sendText, editText, clearButtons: async () => undefined };
+    const context: AgentContext = { userId: owner.id, calendarId: calendar.id, calendarType: 'personal',
+      calendarTitle: null, telegramUserId: unique, telegramChatId: unique, telegramChatType: 'private',
+      firstName: owner.firstName, displayName: owner.displayName, telegramUsername: null,
+      userPreferences: null, timezone: calendar.timezone, now: '2038-10-01T12:00:00+03:00' };
+    try {
+      await createEvents(database, calendar.id, owner.id, { events: Array.from({ length: 6 }, (_, index) => ({
+        title: `Задача ${index + 1}`, description: null, dateFrom: `2038-10-0${index + 2}`, dateTo: null, time: null,
+      })) });
+      context.listSnapshot = await readTaskList(database, calendar.id);
+      await publishCalendarList(database, telegram, context, 'Текст первой страницы от модели');
+      expect(sendText).toHaveBeenCalledWith(unique, 'Текст первой страницы от модели', {
+        reply_markup: { inline_keyboard: [[{ text: '›', callback_data: 'list:2' }]] },
+      });
+      await publishCalendarList(database, telegram, context, 'Повторный просмотр');
+      expect(sendText).toHaveBeenCalledTimes(1);
+      expect(editText).toHaveBeenLastCalledWith(unique, 500, 'Повторный просмотр', expect.any(Object));
+
+      await requestListPage(database, calendar.id, 999, 2);
+      expect((await readTaskList(database, calendar.id)).page).toBe(1);
+      await requestListPage(database, calendar.id, 500, 2);
+      const secondPage = await readTaskList(database, calendar.id);
+      expect(secondPage.events.map((event) => event.title)).toEqual(['Задача 6']);
+      context.listSnapshot = secondPage;
+      editText.mockImplementationOnce(async () => { await touchCalendarList(database, calendar.id); });
+      await publishCalendarList(database, telegram, context, 'Текст второй страницы от модели');
+      const state = await database.selectFrom('calendar_lists').selectAll()
+        .where('calendar_id', '=', calendar.id).executeTakeFirstOrThrow();
+      expect(Number(state.message_id)).toBe(500);
+      expect(Number(state.revision)).toBeGreaterThan(Number(state.published_revision));
+      expect(Number(state.page)).toBe(1);
+      const claim = await claimCalendarList(database, 60_000);
+      expect(Number(claim?.calendar_id)).toBe(calendar.id);
+      await releaseListClaim(database, calendar.id, claim!.token, false);
+
+      context.listSnapshot = await readTaskList(database, calendar.id);
+      editText.mockRejectedValueOnce(new Error('Bad Request: message to edit not found'));
+      sendText.mockResolvedValueOnce(501);
+      await publishCalendarList(database, telegram, context, 'Восстановленный список');
+      expect(sendText).toHaveBeenCalledTimes(2);
+      expect(Number((await database.selectFrom('calendar_lists').select('message_id')
+        .where('calendar_id', '=', calendar.id).executeTakeFirstOrThrow()).message_id)).toBe(501);
+    } finally {
+      await database.deleteFrom('users').where('id', '=', owner.id).execute();
+    }
+  });
+
+  it('keeps readiness answers bound to the current deadline and persists the reschedule conversation', async () => {
+    const unique = Date.now() + 1000;
+    const author = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Автор', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const calendar = await ensureCalendar(database, { type: 'group', telegramChatId: -unique,
+      title: 'Workflow test', timezone: 'Europe/Moscow' });
+    const other = await ensureCalendar(database, { type: 'group', telegramChatId: -unique - 1,
+      title: 'Other workflow test', timezone: 'Europe/Moscow' });
+    const now = '2038-10-01T12:00:00+03:00';
+    try {
+      const created = await createEvents(database, calendar.id, author.id, { events: [
+        { title: 'Интервал', description: null, dateFrom: '2038-10-05', dateTo: '2038-10-11', time: null },
+        { title: 'Без срока', description: null, dateFrom: null, dateTo: null, time: null },
+        { title: 'Ближайшая', description: null, dateFrom: '2038-10-06', dateTo: null, time: null },
+      ] });
+      const eventId = created.events[0]!.id;
+      const settings = { eventIds: created.events.map((event) => event.id), mode: 'default' as const,
+        reminderTimes: null, checkCompletion: true };
+      await configureNotifications(database, calendar.id, calendar.timezone, now, settings);
+      expect((await configureNotifications(database, calendar.id, calendar.timezone, now, settings)).changed).toBe(false);
+      expect((await readTaskList(database, calendar.id)).events.map((event) => event.title))
+        .toEqual(['Ближайшая', 'Интервал', 'Без срока']);
+      const notifications = await database.selectFrom('notifications').selectAll()
+        .where('event_id', '=', eventId).orderBy('remind_at_utc').execute();
+      expect(notifications.map((row) => row.remind_at_utc)).toEqual([
+        '2038-10-04 07:00:00.000', '2038-10-10 07:00:00.000', '2038-10-12 07:00:00.000',
+      ]);
+      const question = notifications.find((row) => row.kind === 'completion_check')!;
+      await database.updateTable('notifications').set({ status: 'sent', telegram_message_id: 400 })
+        .where('id', '=', Number(question.id)).execute();
+      expect(await enqueueReadinessAnswer(database, other.id, 400, Number(question.id), 1, false)).toBe(false);
+      expect(await enqueueReadinessAnswer(database, calendar.id, 999, Number(question.id), 1, false)).toBe(false);
+      expect(await enqueueReadinessAnswer(database, calendar.id, 400, Number(question.id), 1, false)).toBe(true);
+      expect(await enqueueReadinessAnswer(database, calendar.id, 400, Number(question.id), 1, true)).toBe(false);
+      const response = await database.selectFrom('notifications').selectAll().where('event_id', '=', eventId)
+        .where('kind', '=', 'readiness_response').executeTakeFirstOrThrow();
+      const context: AgentContext = { userId: null, calendarId: calendar.id, calendarType: 'group',
+        calendarTitle: calendar.title, telegramUserId: null, telegramChatId: -unique,
+        telegramChatType: 'supergroup', firstName: null, displayName: null, telegramUsername: null,
+        userPreferences: null, timezone: calendar.timezone, now,
+        trigger: { kind: 'notification', notificationId: Number(response.id), eventId,
+          deadlineVersion: 1, notificationKind: 'readiness_response', answer: false } };
+      expect(await recordReadiness(database, context)).toMatchObject({ ready: false, awaitingNewDates: true, changed: true });
+      expect(await recordReadiness(database, context)).toMatchObject({ changed: false });
+      await database.updateTable('notifications').set({ status: 'sent', telegram_message_id: 401 })
+        .where('id', '=', Number(response.id)).execute();
+      expect(await getRescheduleReplyContext(database, calendar.id, 401))
+        .toEqual({ kind: 'reschedule_reply', eventId, deadlineVersion: 1 });
+      const moved = await rescheduleEvent(database, calendar.id, calendar.timezone, now,
+        { eventId, dateFrom: '2038-10-15', dateTo: '2038-10-20', time: null, reminderTimes: null });
+      expect(moved).toMatchObject({ success: true, event: { deadlineVersion: 2 } });
+      expect(await getRescheduleReplyContext(database, calendar.id, 401)).toBeUndefined();
+      expect(await enqueueReadinessAnswer(database, calendar.id, 400, Number(question.id), 1, true)).toBe(false);
+      const nextQuestion = await database.selectFrom('notifications').selectAll().where('event_id', '=', eventId)
+        .where('kind', '=', 'completion_check').where('deadline_version', '=', 2).executeTakeFirstOrThrow();
+      await database.updateTable('notifications').set({ status: 'sent', telegram_message_id: 402 })
+        .where('id', '=', Number(nextQuestion.id)).execute();
+      expect(await enqueueReadinessAnswer(database, calendar.id, 402, Number(nextQuestion.id), 2, true)).toBe(true);
+      const nextResponse = await database.selectFrom('notifications').selectAll().where('event_id', '=', eventId)
+        .where('kind', '=', 'readiness_response').where('deadline_version', '=', 2).executeTakeFirstOrThrow();
+      context.trigger = { kind: 'notification', notificationId: Number(nextResponse.id), eventId,
+        deadlineVersion: 2, notificationKind: 'readiness_response', answer: true };
+      expect(await recordReadiness(database, context)).toMatchObject({ ready: true, changed: true });
+      expect(await recordReadiness(database, context)).toMatchObject({ changed: false });
+      expect((await readTaskList(database, calendar.id)).events.map((event) => event.title))
+        .toEqual(['Ближайшая', 'Без срока']);
+    } finally {
+      await database.deleteFrom('calendars').where('id', 'in', [calendar.id, other.id]).execute();
+      await database.deleteFrom('users').where('id', '=', author.id).execute();
+    }
+  });
+
 });

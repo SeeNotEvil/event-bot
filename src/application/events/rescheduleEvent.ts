@@ -1,255 +1,78 @@
-import { DateTime } from 'luxon';
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { mapEvent } from './mapEvent.js';
-import {
-  rescheduleEventInputSchema,
-  rescheduleEventOutputSchema,
-  type RescheduleEventFailureReason,
-  type RescheduleEventInput,
-  type RescheduleEventOutput,
-} from './schemas.js';
-import {
-  formatDateForDatabase,
-  formatUtcDateTimeInZone,
-  parseLocalDateTime,
-} from '../notifications/time.js';
-
-type ReminderTarget = {
-  localTime: string;
-  utcTime: string;
-};
+import { rescheduleEventInputSchema, rescheduleEventOutputSchema,
+  rescheduleEventFailureReasonSchema, type RescheduleEventInput, type RescheduleEventOutput,
+  type RescheduleEventFailureReason } from './schemas.js';
+import { formatUtcDateTimeInZone } from '../notifications/time.js';
+import { planNotifications, replaceNotificationPlan, type ReminderMode } from '../notifications/configureNotifications.js';
+import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
+import { touchCalendarList } from '../schedule/calendarList.js';
 
 function failure(reason: RescheduleEventFailureReason): RescheduleEventOutput {
-  return rescheduleEventOutputSchema.parse({
-    success: false,
-    changed: false,
-    event: null,
-    notifications: [],
-    cancelledNotificationCount: 0,
-    reason,
-  });
+  return { success: false, changed: false, event: null, notifications: [], cancelledNotificationCount: 0, reason };
 }
 
 export async function rescheduleEvent(
-  database: Kysely<Database>,
-  calendarId: number,
-  timezone: string,
-  currentDateTime: string,
-  rawInput: RescheduleEventInput,
+  database: Kysely<Database>, calendarId: number, timezone: string, now: string, rawInput: RescheduleEventInput,
 ): Promise<RescheduleEventOutput> {
   const input = rescheduleEventInputSchema.parse(rawInput);
-  const now = DateTime.fromISO(currentDateTime, { setZone: true });
-
-  if (!now.isValid) {
-    return failure('INVALID_LOCAL_TIME');
+  try {
+    return await database.transaction().execute(async (transaction) => {
+      const event = await transaction.selectFrom('events').selectAll()
+        .where('id', '=', input.eventId).where('calendar_id', '=', calendarId)
+        .where('status', '=', 'active').forUpdate().executeTakeFirst();
+      if (!event) return failure('EVENT_NOT_FOUND_OR_INACTIVE');
+      const pending = await transaction.selectFrom('notifications').selectAll()
+        .where('event_id', '=', input.eventId).where('status', '=', 'pending').forUpdate().execute();
+      if (input.reminderTimes === null && pending.some((row) => row.kind === 'reminder' && row.source === 'manual')) {
+        return failure('CUSTOM_REMINDER_TIMES_REQUIRED');
+      }
+      const mode: ReminderMode = input.reminderTimes === null
+        ? event.reminder_mode === 'legacy' ? 'default' : event.reminder_mode
+        : input.reminderTimes.length ? 'custom' : 'off';
+      const checkCompletion = event.reminder_mode === 'legacy' ? true : Boolean(event.check_completion);
+      const targets = planNotifications(input, timezone, now, mode, input.reminderTimes ?? [], checkCompletion);
+      const customTimes = targets.filter((target) => target.source === 'manual').map((target) => target.at);
+      if (customTimes.length) {
+        const sent = await transaction.selectFrom('notifications').select('id')
+          .where('event_id', '=', input.eventId).where('kind', '=', 'reminder')
+          .where('status', '=', 'sent').where('remind_at_utc', 'in', customTimes).executeTakeFirst();
+        if (sent) return failure('REMINDER_TIME_ALREADY_SENT');
+      }
+      const scheduleChanged = event.date_from !== input.dateFrom || event.date_to !== input.dateTo ||
+        (event.time === null ? null : event.time.slice(0, 5)) !== input.time;
+      let cancelledCount = 0;
+      const updatedEvent = { ...event, date_from: input.dateFrom, date_to: input.dateTo, time: input.time,
+        deadline_version: Number(event.deadline_version) + Number(scheduleChanged) };
+      if (scheduleChanged) {
+        cancelledCount = await cancelPendingEventNotifications(transaction, [input.eventId], new Date());
+        await transaction.updateTable('events').set({
+          date_from: input.dateFrom, date_to: input.dateTo, time: input.time,
+          deadline_version: updatedEvent.deadline_version, updated_at: new Date(),
+        }).where('id', '=', input.eventId).execute();
+      }
+      const plan = await replaceNotificationPlan(transaction, updatedEvent, timezone, now,
+        mode, input.reminderTimes ?? [], checkCompletion);
+      const changed = scheduleChanged || plan.changed;
+      if (changed) await touchCalendarList(transaction, calendarId);
+      const notifications = await transaction.selectFrom('notifications').selectAll()
+        .where('event_id', '=', input.eventId).where('status', '=', 'pending')
+        .where('kind', '!=', 'readiness_response').orderBy('remind_at_utc').orderBy('id').execute();
+      return rescheduleEventOutputSchema.parse({
+        success: true, changed,
+        event: mapEvent({ ...updatedEvent, reminder_mode: mode, check_completion: Number(checkCompletion) }),
+        cancelledNotificationCount: cancelledCount + plan.cancelledCount,
+        notifications: notifications.map((row) => ({
+          id: Number(row.id), eventId: input.eventId, eventTitle: event.title,
+          remindAt: formatUtcDateTimeInZone(row.remind_at_utc, timezone), timezone, status: row.status,
+          kind: row.kind, source: row.source,
+        })),
+      });
+    });
+  } catch (error) {
+    const reason = rescheduleEventFailureReasonSchema.safeParse(error instanceof Error ? error.message : null);
+    if (reason.success) return failure(reason.data);
+    throw error;
   }
-
-  const reminderTargets: ReminderTarget[] = [];
-  for (const localTime of input.reminderTimes) {
-    const parsed = parseLocalDateTime(localTime, timezone);
-    if (!parsed) {
-      return failure('INVALID_LOCAL_TIME');
-    }
-    if (parsed.toUTC().toMillis() <= now.toUTC().toMillis()) {
-      return failure('REMINDER_NOT_IN_FUTURE');
-    }
-
-    reminderTargets.push({
-      localTime,
-      utcTime: formatDateForDatabase(parsed),
-    });
-  }
-
-  const desiredUtcTimes = new Set(reminderTargets.map((target) => target.utcTime));
-
-  return database.transaction().execute(async (transaction) => {
-    const event = await transaction
-      .selectFrom('events')
-      .selectAll()
-      .where('id', '=', input.eventId)
-      .where('calendar_id', '=', calendarId)
-      .where('status', '=', 'active')
-      .forUpdate()
-      .executeTakeFirst();
-
-    if (!event) {
-      return failure('EVENT_NOT_FOUND_OR_INACTIVE');
-    }
-
-    const existingNotifications = await transaction
-      .selectFrom('notifications')
-      .select([
-        'id',
-        'event_id',
-        'remind_at_utc',
-        'timezone',
-        'status',
-      ])
-      .where('event_id', '=', input.eventId)
-      .forUpdate()
-      .execute();
-    const existingByUtcTime = new Map(
-      existingNotifications.map((notification) => [
-        notification.remind_at_utc,
-        notification,
-      ]),
-    );
-
-    const hasSentConflict = existingNotifications.some(
-      (notification) =>
-        notification.status === 'sent' &&
-        desiredUtcTimes.has(notification.remind_at_utc),
-    );
-    if (hasSentConflict) {
-      return failure('REMINDER_TIME_ALREADY_SENT');
-    }
-
-    const currentPending = existingNotifications.filter(
-      (notification) => notification.status === 'pending',
-    );
-    const currentPendingUtcTimes = new Set(
-      currentPending.map((notification) => notification.remind_at_utc),
-    );
-    const samePendingTimes =
-      currentPendingUtcTimes.size === desiredUtcTimes.size &&
-      [...desiredUtcTimes].every((utcTime) => currentPendingUtcTimes.has(utcTime));
-    const samePendingTimezones = reminderTargets.every((target) => {
-      const notification = existingByUtcTime.get(target.utcTime);
-      return notification?.status === 'pending' && notification.timezone === timezone;
-    });
-    const sameSchedule =
-      event.date_from === input.dateFrom &&
-      event.date_to === input.dateTo &&
-      (event.time === null ? null : event.time.slice(0, 5)) === input.time;
-    const changed = !sameSchedule || !samePendingTimes || !samePendingTimezones;
-
-    const cancelledIds = currentPending
-      .filter((notification) => !desiredUtcTimes.has(notification.remind_at_utc))
-      .map((notification) => Number(notification.id));
-    const updatedAt = new Date();
-
-    if (!sameSchedule) {
-      const update = await transaction
-        .updateTable('events')
-        .set({
-          date_from: input.dateFrom,
-          date_to: input.dateTo,
-          time: input.time,
-          updated_at: updatedAt,
-        })
-        .where('id', '=', input.eventId)
-        .where('calendar_id', '=', calendarId)
-        .where('status', '=', 'active')
-        .executeTakeFirstOrThrow();
-
-      if (Number(update.numUpdatedRows) !== 1) {
-        throw new Error('Event reschedule updated an unexpected number of rows');
-      }
-    }
-
-    if (cancelledIds.length > 0) {
-      const cancellation = await transaction
-        .updateTable('notifications')
-        .set({
-          status: 'cancelled',
-          lock_token: null,
-          locked_at: null,
-          last_error: null,
-          updated_at: updatedAt,
-        })
-        .where('id', 'in', cancelledIds)
-        .where('status', '=', 'pending')
-        .executeTakeFirstOrThrow();
-
-      if (Number(cancellation.numUpdatedRows) !== cancelledIds.length) {
-        throw new Error('Reminder replacement cancelled an unexpected number of rows');
-      }
-    }
-
-    for (const target of reminderTargets) {
-      const existing = existingByUtcTime.get(target.utcTime);
-
-      if (existing?.status === 'pending') {
-        if (existing.timezone !== timezone) {
-          await transaction
-            .updateTable('notifications')
-            .set({ timezone, updated_at: updatedAt })
-            .where('id', '=', Number(existing.id))
-            .where('status', '=', 'pending')
-            .executeTakeFirstOrThrow();
-        }
-        continue;
-      }
-
-      if (existing?.status === 'cancelled') {
-        await transaction
-          .updateTable('notifications')
-          .set({
-            timezone,
-            status: 'pending',
-            attempts: 0,
-            lock_token: null,
-            locked_at: null,
-            sent_at: null,
-            last_error: null,
-            updated_at: updatedAt,
-          })
-          .where('id', '=', Number(existing.id))
-          .where('status', '=', 'cancelled')
-          .executeTakeFirstOrThrow();
-        continue;
-      }
-
-      await transaction
-        .insertInto('notifications')
-        .values({
-          event_id: input.eventId,
-          remind_at_utc: target.utcTime,
-          timezone,
-          status: 'pending',
-          lock_token: null,
-          locked_at: null,
-          sent_at: null,
-          last_error: null,
-          updated_at: updatedAt,
-        })
-        .executeTakeFirstOrThrow();
-    }
-
-    const updatedEvent = sameSchedule
-      ? event
-      : await transaction
-          .selectFrom('events')
-          .selectAll()
-          .where('id', '=', input.eventId)
-          .where('calendar_id', '=', calendarId)
-          .executeTakeFirstOrThrow();
-    const pendingNotifications = await transaction
-      .selectFrom('notifications')
-      .select(['id', 'event_id', 'remind_at_utc', 'timezone', 'status'])
-      .where('event_id', '=', input.eventId)
-      .where('status', '=', 'pending')
-      .orderBy('remind_at_utc', 'asc')
-      .orderBy('id', 'asc')
-      .execute();
-
-    return rescheduleEventOutputSchema.parse({
-      success: true,
-      changed,
-      event: mapEvent(updatedEvent),
-      notifications: pendingNotifications.map((notification) => ({
-        id: Number(notification.id),
-        eventId: Number(notification.event_id),
-        eventTitle: updatedEvent.title,
-        remindAt: formatUtcDateTimeInZone(
-          notification.remind_at_utc,
-          notification.timezone,
-        ),
-        timezone: notification.timezone,
-        status: notification.status,
-      })),
-      cancelledNotificationCount: cancelledIds.length,
-    });
-  });
 }

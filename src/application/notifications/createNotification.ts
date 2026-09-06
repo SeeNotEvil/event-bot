@@ -47,7 +47,7 @@ export async function createNotification(
   return database.transaction().execute(async (transaction) => {
     const event = await transaction
       .selectFrom('events')
-      .select(['id', 'title'])
+      .select(['id', 'title', 'deadline_version'])
       .where('id', '=', input.eventId)
       .where('calendar_id', '=', calendarId)
       .where('status', '=', 'active')
@@ -65,8 +65,10 @@ export async function createNotification(
 
     const existing = await transaction
       .selectFrom('notifications')
-      .select(['id', 'event_id', 'remind_at_utc', 'timezone', 'status'])
+      .select(['id', 'event_id', 'remind_at_utc', 'timezone', 'status', 'source'])
       .where('event_id', '=', input.eventId)
+      .where('kind', '=', 'reminder')
+      .where('deadline_version', '=', Number(event.deadline_version))
       .where('remind_at_utc', '=', remindAtUtc)
       .forUpdate()
       .executeTakeFirst();
@@ -79,16 +81,21 @@ export async function createNotification(
           .updateTable('notifications')
           .set({
             timezone,
+            source: 'manual',
             status: 'pending',
             attempts: 0,
             lock_token: null,
             locked_at: null,
+            retry_at: null,
             sent_at: null,
             last_error: null,
             updated_at: new Date(),
           })
           .where('id', '=', Number(existing.id))
           .executeTakeFirstOrThrow();
+      } else if (existing.status === 'pending' && existing.source !== 'manual') {
+        await transaction.updateTable('notifications').set({ source: 'manual', updated_at: new Date() })
+          .where('id', '=', Number(existing.id)).execute();
       }
 
       return createNotificationOutputSchema.parse({
@@ -101,6 +108,8 @@ export async function createNotification(
           remindAt: formatUtcDateTimeInZone(existing.remind_at_utc, timezone),
           timezone,
           status: shouldReactivate ? 'pending' : existing.status,
+          kind: 'reminder',
+          source: existing.status === 'sent' ? existing.source : 'manual',
         },
       });
     }
@@ -109,9 +118,12 @@ export async function createNotification(
       .insertInto('notifications')
       .values({
         event_id: input.eventId,
+        deadline_version: Number(event.deadline_version),
         remind_at_utc: remindAtUtc,
         timezone,
         status: 'pending',
+        kind: 'reminder',
+        source: 'manual',
         lock_token: null,
         locked_at: null,
         sent_at: null,
@@ -139,6 +151,8 @@ export async function createNotification(
         remindAt: input.remindAt,
         timezone,
         status: 'pending',
+        kind: 'reminder',
+        source: 'manual',
       },
     });
   });

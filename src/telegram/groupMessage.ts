@@ -34,11 +34,11 @@ function applyReplacements(text: string, replacements: Replacement[]): string {
 
 export function extractGroupRequest(input: GroupMessageInput): string | null {
   const username = input.botUsername.toLocaleLowerCase('en-US');
-  const expectedMention = `@${username}`;
+  const expectedMentions = new Set([`@${username}`, '@meimei']);
   const mentionEntities = input.entities.filter(
     (entity) =>
       entity.type === 'mention' &&
-      entityText(input.text, entity).toLocaleLowerCase('en-US') === expectedMention,
+      expectedMentions.has(entityText(input.text, entity).toLocaleLowerCase('en-US')),
   );
   const commandEntity = input.entities.find(
     (entity) => entity.type === 'bot_command' && entity.offset === 0,

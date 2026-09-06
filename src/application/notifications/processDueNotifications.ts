@@ -2,16 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { formatDateForDatabase } from './time.js';
+import { StaleAgentTask } from '../schedule/calendarList.js';
 
 export type DueNotification = {
   notificationId: number;
   eventId: number;
+  calendarId: number;
+  kind: 'reminder' | 'completion_check' | 'readiness_response';
+  deadlineVersion: number;
+  answer: boolean | null;
   eventTitle: string;
-  eventDateFrom: string;
+  eventDateFrom: string | null;
   eventDateTo: string | null;
   eventTime: string | null;
   telegramChatId: number;
   createdByName: string;
+  createdByTelegramId: number;
   timezone: string;
   calendarType: 'personal' | 'group';
   calendarTitle: string | null;
@@ -29,8 +35,7 @@ export type ProcessDueNotificationsOptions = {
   lockTimeoutMs: number;
   notificationIds?: number[];
   signal?: AbortSignal;
-  prepareMessage: (notification: DueNotification) => Promise<string>;
-  send: (notification: DueNotification, message: string) => Promise<void>;
+  run: (notification: DueNotification, guard: () => Promise<void>) => Promise<void>;
 };
 
 export type ProcessDueNotificationsResult = {
@@ -69,12 +74,16 @@ async function claimDueNotification(
       .select([
         'notifications.id as notification_id',
         'notifications.event_id',
+        'notifications.kind',
+        'notifications.deadline_version',
+        'notifications.answer',
         'notifications.timezone',
         'events.title as event_title',
         'events.date_from',
         'events.date_to',
         'events.time as event_time',
         'calendars.type as calendar_type',
+        'calendars.id as calendar_id',
         'calendars.title as calendar_title',
         'personal_owner.first_name as recipient_first_name',
         'user_preferences.content as recipient_preferences',
@@ -83,10 +92,16 @@ async function claimDueNotification(
           else personal_owner.telegram_chat_id
         end`.as('destination_chat_id'),
         'event_creator.first_name as creator_first_name',
+        'event_creator.telegram_user_id as creator_telegram_id',
       ])
       .where('notifications.status', '=', 'pending')
       .where('notifications.remind_at_utc', '<=', dueBeforeForDatabase)
-      .where('events.status', '=', 'active')
+      .whereRef('events.deadline_version', '=', 'notifications.deadline_version')
+      .where((eb) => eb.or([
+        eb('events.status', '=', 'active'),
+        eb.and([eb('events.status', '=', 'completed'), eb('notifications.kind', '=', 'readiness_response'), eb('notifications.action_applied', '=', 1)]),
+      ]))
+      .where((eb) => eb.or([eb('notifications.retry_at', 'is', null), eb('notifications.retry_at', '<=', formatDateForDatabase(new Date()))]))
       .where((expression) =>
         expression.or([
           expression.and([
@@ -149,12 +164,17 @@ async function claimDueNotification(
       claimToken,
       notificationId: Number(row.notification_id),
       eventId: Number(row.event_id),
+      calendarId: Number(row.calendar_id),
+      kind: row.kind,
+      deadlineVersion: Number(row.deadline_version),
+      answer: row.answer === null ? null : Boolean(row.answer),
       eventTitle: row.event_title,
       eventDateFrom: row.date_from,
       eventDateTo: row.date_to,
       eventTime: row.event_time === null ? null : row.event_time.slice(0, 5),
       telegramChatId: Number(row.destination_chat_id),
       createdByName: row.creator_first_name ?? 'Пользователь',
+      createdByTelegramId: Number(row.creator_telegram_id),
       timezone: row.timezone,
       calendarType: row.calendar_type,
       calendarTitle: row.calendar_title,
@@ -181,7 +201,11 @@ async function refreshNotificationClaim(
         expression.selectFrom('events')
           .select('events.id')
           .whereRef('events.id', '=', 'notifications.event_id')
-          .where('events.status', '=', 'active'),
+          .whereRef('events.deadline_version', '=', 'notifications.deadline_version')
+          .where((eb) => eb.or([
+            eb('events.status', '=', 'active'),
+            eb.and([eb('events.status', '=', 'completed'), eb('notifications.kind', '=', 'readiness_response'), eb('notifications.action_applied', '=', 1)]),
+          ])),
       ),
     )
     .executeTakeFirstOrThrow();
@@ -226,6 +250,7 @@ async function releaseFailedNotification(
       lock_token: null,
       locked_at: null,
       last_error: message.slice(0, 4_000),
+      retry_at: new Date(Date.now() + 30_000),
       updated_at: now,
     })
     .where('id', '=', notification.notificationId)
@@ -261,13 +286,18 @@ export async function processDueNotifications(
     result.claimed += 1;
 
     try {
-      const message = await options.prepareMessage(notification);
-      if (!await refreshNotificationClaim(database, notification)) {
+      const guard = async () => {
+        if (options.signal?.aborted) throw new Error('Worker is stopping');
+        if (!await refreshNotificationClaim(database, notification)) throw new StaleAgentTask();
+      };
+      await options.run(notification, guard);
+    } catch (error) {
+      if (error instanceof StaleAgentTask) {
+        await database.updateTable('notifications').set({ status: 'cancelled', lock_token: null, locked_at: null })
+          .where('id', '=', notification.notificationId).where('lock_token', '=', notification.claimToken).execute();
         result.skipped += 1;
         continue;
       }
-      await options.send(notification, message);
-    } catch (error) {
       await releaseFailedNotification(database, notification, new Date(), error);
       result.failed += 1;
       continue;

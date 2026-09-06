@@ -1,36 +1,23 @@
+import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { scheduleEventSchema } from '../../application/schedule/schemas.js';
+import type { Database } from '../../db/types.js';
+import { publishCalendarList } from '../../application/schedule/calendarList.js';
 import type { TelegramGateway } from '../../telegram/TelegramAdapter.js';
 import { defineTool } from './Tool.js';
 
-export const displayEventSchema = scheduleEventSchema;
+export const sendEventListInputSchema = z.object({ text: z.string().min(1).max(4096) });
 
-export const sendEventListInputSchema = z.object({
-  title: z.string().trim().min(1).max(128),
-  events: z.array(displayEventSchema).max(100),
-});
-
-const sendEventListOutputSchema = z.object({
-  success: z.literal(true),
-  transcript: z.string(),
-});
-
-export function createSendEventListTool(telegram: TelegramGateway) {
+export function createSendEventListTool(database: Kysely<Database>, telegram: TelegramGateway) {
   return defineTool({
     name: 'send_event_list',
-    description:
-      'Показывает структурированный список событий, их авторов и напоминаний через Telegram Adapter. Обязательное предусловие: сначала получи список через search_schedule после всех изменений текущего поручения. Результат create_events не заменяет этот поиск. Передавай events без изменений из результата search_schedule и не добавляй данные самостоятельно. Сформулируй короткий и точный title в узнаваемом голосе Ираиды, естественно используя активное обращение или лёгкий церемониальный оборот; подтверждение изменений в title должно опираться на успешные результаты соответствующих tools. Это terminal interaction tool: после него выполнение прекращается. Сначала выполни все части поручения, затем покажи итоговый список. Если общий итог, уточнение или вопрос о напоминаниях не помещается в title, используй send_message с нужными сведениями вместо этого tool.',
+    description: 'Публикует написанный тобой полный текст текущей страницы общего активного списка: заголовок, все пункты и пояснения. Сначала вызови read_task_list после всех изменений. Сохрани все задачи страницы и их порядок, точные названия, даты, время и авторов. Покажи номер страницы, если страниц несколько. Тулс только отправляет или редактирует одно сообщение, оформляет кнопки страниц и проверяет версию данных. Для выборок по фильтрам используй search_schedule и send_message. Это terminal tool: сначала выполни все части поручения.',
     input: sendEventListInputSchema,
-    output: sendEventListOutputSchema,
+    output: z.object({ success: z.literal(true), transcript: z.string() }),
     terminal: true,
     execute: async (context, input) => {
-      const transcript = await telegram.sendEventList(
-        context.telegramChatId,
-        input.title,
-        input.events,
-        context.now,
-      );
-      return { success: true as const, transcript };
+      if (context.trigger?.kind === 'notification') throw new Error('Deliver the notification using send_message');
+      context.outgoingMessageId = await publishCalendarList(database, telegram, context, input.text);
+      return { success: true as const, transcript: input.text };
     },
     transcript: (_input, output) => output.transcript,
   });

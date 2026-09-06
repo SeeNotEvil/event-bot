@@ -1,4 +1,5 @@
 import type { FunctionTool } from 'openai/resources/responses/responses';
+import type { AgentContext } from '../../types/domain.js';
 import { toOpenAITool, type AnyTool, type ToolDefinition } from './Tool.js';
 
 export class UnknownToolError extends Error {
@@ -30,7 +31,10 @@ export class ToolRegistry {
     return tool;
   }
 
-  public specs(): FunctionTool[] {
-    return [...this.tools.values()].map(toOpenAITool);
+  public specs(context?: AgentContext): FunctionTool[] {
+    return [...this.tools.values()].filter((tool) =>
+      (!tool.requiresUser || context?.userId !== null) &&
+      (context === undefined || tool.availableWhen === undefined || tool.availableWhen(context)),
+    ).map(toOpenAITool);
   }
 }

@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { eventSchema } from '../../types/domain.js';
 import { mapEvent } from './mapEvent.js';
+import { touchCalendarList } from '../schedule/calendarList.js';
 import {
   createEventsInputSchema,
   createEventsOutputSchema,
@@ -16,14 +17,11 @@ export async function createEvents(
   rawInput: CreateEventsInput,
 ): Promise<CreateEventsOutput> {
   const input = createEventsInputSchema.parse(rawInput);
-  const dateFrom = input.events.reduce(
-    (earliest, event) => (event.dateFrom < earliest ? event.dateFrom : earliest),
-    input.events[0]?.dateFrom ?? '',
-  );
-  const dateTo = input.events.reduce((latest, event) => {
-    const eventEnd = event.dateTo ?? event.dateFrom;
-    return eventEnd > latest ? eventEnd : latest;
-  }, input.events[0]?.dateTo ?? input.events[0]?.dateFrom ?? '');
+  const starts = input.events.flatMap((event) => event.dateFrom ? [event.dateFrom] : []).sort();
+  const ends = input.events.flatMap((event) => {
+    const end = event.dateTo ?? event.dateFrom;
+    return end === null ? [] : [end];
+  }).sort();
 
   return database.transaction().execute(async (transaction) => {
     const now = new Date();
@@ -77,10 +75,11 @@ export async function createEvents(
     }
 
     const events = rows.map((row) => eventSchema.parse(mapEvent(row)));
+    await touchCalendarList(transaction, calendarId);
 
     return createEventsOutputSchema.parse({
       createdCount: events.length,
-      dateRange: { from: dateFrom, to: dateTo },
+      dateRange: starts.length > 0 ? { from: starts[0], to: ends.at(-1) } : null,
       events,
     });
   });

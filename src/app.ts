@@ -2,23 +2,7 @@ import 'dotenv/config';
 import { createServer, type Server } from 'node:http';
 import OpenAI from 'openai';
 import { Bot } from 'grammy';
-import { AgentRuntime } from './agent/AgentRuntime.js';
-import { BotBrain } from './agent/BotBrain.js';
-import { ToolRegistry } from './agent/tools/ToolRegistry.js';
-import { ToolRuntime } from './agent/tools/ToolRuntime.js';
-import { createCreateEventsTool } from './agent/tools/createEvents.tool.js';
-import { createCompleteEventTool } from './agent/tools/completeEvent.tool.js';
-import { createDeleteEventTool } from './agent/tools/deleteEvent.tool.js';
-import { createDeleteEventsTool } from './agent/tools/deleteEvents.tool.js';
-import { createCreateNotificationTool } from './agent/tools/createNotification.tool.js';
-import { createDeleteNotificationTool } from './agent/tools/deleteNotification.tool.js';
-import { createSearchEventsTool } from './agent/tools/searchEvents.tool.js';
-import { createSearchNotificationsTool } from './agent/tools/searchNotifications.tool.js';
-import { createRescheduleEventTool } from './agent/tools/rescheduleEvent.tool.js';
-import { createSearchScheduleTool } from './agent/tools/searchSchedule.tool.js';
-import { createSendEventListTool } from './agent/tools/sendEventList.tool.js';
-import { createSendMessageTool } from './agent/tools/sendMessage.tool.js';
-import { createSaveUserPreferencesTool } from './agent/tools/saveUserPreferences.tool.js';
+import { createBrain } from './agent/createBrain.js';
 import { ensureCalendar } from './application/calendars/ensureCalendar.js';
 import { ensureUser } from './application/users/ensureUser.js';
 import { loadConfig } from './config/config.js';
@@ -69,39 +53,11 @@ async function main(): Promise<void> {
       maxRetries: 2,
     });
 
-    const registry = new ToolRegistry()
-      .register(createCreateEventsTool(database))
-      .register(createSearchEventsTool(database))
-      .register(createSearchScheduleTool(database))
-      .register(createCompleteEventTool(database))
-      .register(createRescheduleEventTool(database))
-      .register(createDeleteEventTool(database))
-      .register(createDeleteEventsTool(database))
-      .register(createCreateNotificationTool(database))
-      .register(createSearchNotificationsTool(database))
-      .register(createDeleteNotificationTool(database))
-      .register(createSaveUserPreferencesTool(database))
-      .register(createSendMessageTool(telegram))
-      .register(createSendEventListTool(telegram));
-    const toolRuntime = new ToolRuntime(registry, logger);
-    const agentRuntime = new AgentRuntime(
-      openai.responses,
-      registry,
-      toolRuntime,
-      config.openai.model,
-      config.openai.maxOutputTokens,
-      config.maxAgentSteps,
-      logger,
-    );
-    const brain = new BotBrain(
-      database,
-      agentRuntime,
-      config.conversationHistoryLimit,
-      logger,
-    );
+    const brain = createBrain(database, telegram, openai.responses, config, logger);
 
     registerTelegramHandlers(bot, {
       brain,
+      database,
       ensureUser: (input) => ensureUser(database, input),
       ensureCalendar: (input) => ensureCalendar(database, input),
       telegram,
@@ -150,13 +106,13 @@ async function main(): Promise<void> {
 
       await bot.api.setWebhook(config.telegram.webhookUrl, {
         secret_token: config.telegram.webhookSecret,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
       });
       logger.info({ webhookUrl: config.telegram.webhookUrl }, 'Telegram webhook registered');
     } else {
       await bot.api.deleteWebhook({ drop_pending_updates: false });
       void bot.start({
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
         onStart: () => logger.info('Telegram polling started'),
       }).catch((error: unknown) => {
         logger.fatal({ error }, 'Telegram polling stopped unexpectedly');

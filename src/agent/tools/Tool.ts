@@ -9,6 +9,8 @@ export type ToolDefinition<Input, Output> = {
   input: ZodType<Input>;
   output: ZodType<Output>;
   terminal?: boolean;
+  requiresUser?: boolean;
+  availableWhen?: (context: AgentContext) => boolean;
   execute: (context: AgentContext, input: Input) => Promise<Output>;
   transcript?: (input: Input, output: Output) => string | null;
 };

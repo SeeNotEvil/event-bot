@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { cancelPendingEventNotifications } from '../notifications/cancelEventNotifications.js';
+import { touchCalendarList } from '../schedule/calendarList.js';
 import {
   deleteEventInputSchema,
   deleteEventOutputSchema,
@@ -44,6 +45,7 @@ export async function deleteEvent(
       .executeTakeFirstOrThrow();
 
     await cancelPendingEventNotifications(transaction, [input.eventId], now);
+    await touchCalendarList(transaction, calendarId);
 
     return deleteEventOutputSchema.parse({
       success: true,

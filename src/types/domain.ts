@@ -2,20 +2,33 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 
 export type AgentContext = {
-  userId: number;
+  userId: number | null;
   calendarId: number;
   calendarType: CalendarType;
   calendarTitle: string | null;
-  telegramUserId: number;
+  telegramUserId: number | null;
   telegramChatId: number;
   telegramChatType: TelegramChatType;
-  firstName: string;
-  displayName: string;
+  firstName: string | null;
+  displayName: string | null;
   telegramUsername: string | null;
   userPreferences: string | null;
   timezone: string;
   now: string;
+  trigger?: AgentTrigger | undefined;
+  listSnapshot?: { revision: number; page: number; pageCount: number };
+  listClaimToken?: string;
+  mentionRecipient?: { id: number; firstName: string } | undefined;
+  beforeStep?: () => Promise<void>;
+  outgoingMessageId?: number;
 };
+
+export type AgentTrigger =
+  | { kind: 'notification'; notificationId: number; eventId: number; deadlineVersion: number;
+      notificationKind: 'reminder' | 'completion_check' | 'readiness_response'; answer: boolean | null }
+  | { kind: 'list_refresh'; revision: number; page: number }
+  | { kind: 'reschedule_reply'; eventId: number; deadlineVersion: number }
+  | { kind: 'service'; reason: string };
 
 export type User = {
   id: number;
@@ -61,11 +74,14 @@ export const eventSchema = z.object({
   id: z.number().int().positive().safe(),
   title: z.string(),
   description: z.string().nullable(),
-  dateFrom: isoDateSchema,
+  dateFrom: isoDateSchema.nullable(),
   dateTo: isoDateSchema.nullable(),
   time: localTimeSchema.nullable(),
   status: eventStatusSchema,
   completedAt: utcDateTimeSchema.nullable(),
+  deadlineVersion: z.number().int().positive(),
+  reminderMode: z.enum(['legacy', 'default', 'custom', 'off']),
+  checkCompletion: z.boolean(),
 });
 
 export type EventDto = z.infer<typeof eventSchema>;

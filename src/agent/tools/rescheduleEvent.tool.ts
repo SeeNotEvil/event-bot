@@ -10,8 +10,8 @@ import { defineTool } from './Tool.js';
 export function createRescheduleEventTool(database: Kysely<Database>) {
   return defineTool({
     name: 'reschedule_event',
-    description:
-      'Атомарно переносит одно однозначно выбранное active-событие текущего календаря и полностью заменяет набор его pending-напоминаний. Получи событие через свежий search_events, а напоминания через search_notifications. Передай полные dateFrom, dateTo и time: не указанные пользователем время и длительность интервала сохраняй из найденного события. reminderTimes — полный новый набор YYYY-MM-DDTHH:mm; [] означает отсутствие напоминаний. Если pending-напоминания есть, а пользователь не задал их новые моменты и не попросил отменить, сначала уточни и ничего не меняй. Timezone и текущее время берутся из контекста.',
+    requiresUser: true,
+    description: 'Атомарно переносит active-задачу и её уведомления. Сначала получи актуальную задачу через search_events/read_event. Передай полные dateFrom/dateTo/time; отсутствие даты допустимо, если оба остальных поля null. reminderTimes=null сохраняет режим и пересчитывает стандартные напоминания; для старой задачи включает стандартные правила. Явный массив заменяет предварительные напоминания, [] отключает их. Если есть пользовательские pending-напоминания, сначала выясни их новые моменты. Перенос делает старые кнопки готовности недействительными.',
     input: rescheduleEventInputSchema,
     output: rescheduleEventOutputSchema,
     execute: (context, input) =>

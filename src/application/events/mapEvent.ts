@@ -21,5 +21,8 @@ export function mapEvent(row: Selectable<EventsTable>): EventDto {
     time: row.time === null ? null : row.time.slice(0, 5),
     status: row.status,
     completedAt,
+    deadlineVersion: Number(row.deadline_version),
+    reminderMode: row.reminder_mode,
+    checkCompletion: Boolean(row.check_completion),
   });
 }

@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import type { AgentContext } from '../../types/domain.js';
 import { UnknownToolError } from './ToolRegistry.js';
 import type { ToolRegistry } from './ToolRegistry.js';
+import { StaleAgentTask } from '../../application/schedule/calendarList.js';
 
 export type ToolRuntimeSuccess = {
   ok: true;
@@ -14,7 +15,7 @@ export type ToolRuntimeFailure = {
   ok: false;
   output: {
     error: {
-      code: 'UNKNOWN_TOOL' | 'INVALID_ARGUMENTS' | 'INVALID_OUTPUT' | 'EXECUTION_FAILED';
+      code: 'UNKNOWN_TOOL' | 'INVALID_ARGUMENTS' | 'INVALID_CONTEXT' | 'INVALID_OUTPUT' | 'EXECUTION_FAILED';
       message: string;
       retryable: boolean;
     };
@@ -47,6 +48,13 @@ export class ToolRuntime {
       throw error;
     }
 
+    if (tool.requiresUser && context.userId === null) {
+      return this.failure('INVALID_CONTEXT', 'Это действие требует текущего поручения пользователя. В фоне выполняй только текущее задание; ответ кнопки применяется через record_readiness.', false);
+    }
+    if (tool.availableWhen && !tool.availableWhen(context)) {
+      return this.failure('INVALID_CONTEXT', 'Инструмент недоступен для текущего фонового задания.', false);
+    }
+
     const input = tool.input.safeParse(rawArguments);
     if (!input.success) {
       return this.failure(
@@ -60,6 +68,7 @@ export class ToolRuntime {
     try {
       rawOutput = await tool.execute(context, input.data);
     } catch (error) {
+      if (error instanceof StaleAgentTask) throw error;
       this.logger.error(
         {
           error,
