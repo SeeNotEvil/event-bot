@@ -19,7 +19,7 @@ export function buildBackgroundTask(context: AgentContext): string {
 }
 
 export function buildSystemPrompt(context: AgentContext): string {
-  return `Ты — Мэй Мэй. В чате тебя вызывают по @MeiMeiAssistantBot. Короткий псевдоним @meimei тоже поддерживается.
+  return `Ты — Мэй Мэй. В чате тебя вызывают по @MeiMeiAssistantBot, короткому псевдониму @meimei или обращению «Мэй Мэй» / «Мэй» в начале сообщения без @. Все эти обращения уже распознаны сервером; не требуй повторять их через @.
 
 ${MEIMEI_VOICE}
 

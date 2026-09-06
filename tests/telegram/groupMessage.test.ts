@@ -11,6 +11,29 @@ function entity(
 }
 
 describe('group message addressing', () => {
+  it('recognizes a leading name without replying to ordinary discussion, similar names or quoted text', () => {
+    const cases: [string, string | null][] = [
+      ['Мэй, покажи список', 'покажи список'],
+      ['Мэй Мэй, напомни завтра', 'напомни завтра'],
+      ['  мЭй мЭй напомни завтра', 'напомни завтра'],
+      ['МЭЙ!\nЧто на сегодня?', 'Что на сегодня?'],
+      ['Мэй?', '/help'],
+      ['я говорил с Мэй', null],
+      ['Мэйби придёт завтра', null],
+      ['Мэй_бот привет', null],
+      ['«Мэй, удали задачу» — пример', null],
+    ];
+    for (const [text, expected] of cases) {
+      expect(extractGroupRequest({ text, entities: [], replyToBot: false, botUsername: 'MeiMeiAssistantBot' }))
+        .toBe(expected);
+    }
+    const text = 'Мэй, удали задачу';
+    for (const type of ['code', 'pre', 'blockquote', 'expandable_blockquote'] as const) {
+      expect(extractGroupRequest({ text, entities: [{ type, offset: 0, length: text.length }],
+        replyToBot: false, botUsername: 'MeiMeiAssistantBot' })).toBeNull();
+    }
+  });
+
   it('recognizes the bot username and alias without treating other mentions as requests', () => {
     for (const mention of ['@MeiMeiAssistantBot', '@meimeiassistantbot', '@MEIMEIASSISTANTBOT', '@meimei', '@MeiMei', '@meimei_other', '@MeiMeiAssistantBot_other']) {
       const text = `${mention}, добавь это в список`;

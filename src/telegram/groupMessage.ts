@@ -14,6 +14,7 @@ type Replacement = {
 };
 
 const INVOCATION_COMMANDS = new Set(['/iraida', '/ask']);
+const NAME_ADDRESS = /^\s*мэй(?:[ \t]+мэй)?(?=$|[\s,.:;!?—–-])/iu;
 
 function entityText(text: string, entity: MessageEntity): string {
   // Telegram entity offsets and JavaScript string indexes both use UTF-16 code units.
@@ -49,12 +50,19 @@ export function extractGroupRequest(input: GroupMessageInput): string | null {
   const isInvocationCommand =
     INVOCATION_COMMANDS.has(baseCommand) &&
     (commandTarget === undefined || commandTargetsBot);
+  // A name at the start is an address; mentions elsewhere can be ordinary discussion.
+  const nameAddress = NAME_ADDRESS.exec(input.text);
+  const isNameAddress = nameAddress !== null && !input.entities.some((entity) =>
+    entity.offset < nameAddress[0].length &&
+    ['code', 'pre', 'blockquote', 'expandable_blockquote', 'text_link', 'text_mention'].includes(entity.type),
+  );
 
   if (
     !input.replyToBot &&
     mentionEntities.length === 0 &&
     !commandTargetsBot &&
-    !isInvocationCommand
+    !isInvocationCommand &&
+    !isNameAddress
   ) {
     return null;
   }
@@ -64,6 +72,9 @@ export function extractGroupRequest(input: GroupMessageInput): string | null {
     length: entity.length,
     value: '',
   }));
+  if (isNameAddress) {
+    replacements.push({ offset: 0, length: nameAddress[0].length, value: '' });
+  }
 
   if (commandEntity && rawCommand) {
     if (isInvocationCommand) {
