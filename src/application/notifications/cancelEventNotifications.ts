@@ -1,15 +1,18 @@
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
+import { changeEventSchedules } from '../scheduler/Scheduler.js';
 
 export async function cancelPendingEventNotifications(
   database: Kysely<Database>,
   eventIds: number[],
   now: Date,
+  stopSchedules = true,
 ): Promise<number> {
   if (eventIds.length === 0) {
     return 0;
   }
 
+  await changeEventSchedules(database, eventIds, now, stopSchedules);
   const result = await database
     .updateTable('notifications')
     .set({

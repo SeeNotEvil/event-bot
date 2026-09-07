@@ -8,6 +8,7 @@ import { requireChatMember } from './application/chats/chatMembers.js';
 import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
 import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
+import { Scheduler } from './application/scheduler/Scheduler.js';
 import { loadConfig } from './config/config.js';
 import { createDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
@@ -46,6 +47,7 @@ export async function runNotificationWorker(): Promise<void> {
     maxRetries: 0,
   });
   const brain = createBrain(database, telegram, openai.responses, config, logger);
+  const scheduler = new Scheduler(database);
   const summaryTimeoutMs = Math.min(config.openai.timeoutMs, 20_000);
   const summaryClient = new OpenAI({ apiKey: config.openai.apiKey, timeout: summaryTimeoutMs, maxRetries: 0 });
   const summaries = new SummaryUpdater(new MysqlThreadMemory(database), summaryClient.responses,
@@ -81,6 +83,13 @@ export async function runNotificationWorker(): Promise<void> {
       const now = new Date();
 
       try {
+        const replenished = await scheduler.replenish(now, config.notificationWorker.batchSize, abortController.signal);
+        if (replenished.enqueued) logger.info(replenished, 'Scheduled jobs enqueued');
+      } catch (error) {
+        logger.error({ error }, 'Schedule generation failed');
+      }
+
+      try {
         const result = await processDueNotifications(database, {
           now,
           batchSize: config.notificationWorker.batchSize,
@@ -93,16 +102,22 @@ export async function runNotificationWorker(): Promise<void> {
               }
             };
             await checkRecipient();
-            const result = await brain.handleBackground(notification.chatId, {
-              kind: 'notification', notificationId: notification.notificationId,
+            const trigger = notification.kind === 'agent_task' ? {
+              kind: 'agent_task' as const, notificationId: notification.notificationId,
+              instruction: notification.instruction, scheduledFor: notification.scheduledFor,
+              timezone: notification.timezone, scheduleId: notification.scheduleId, eventId: notification.eventId,
+            } : {
+              kind: 'notification' as const, notificationId: notification.notificationId,
               eventId: notification.eventId, deadlineVersion: notification.deadlineVersion,
               notificationKind: notification.kind, answer: notification.answer,
-            }, {
-              beforeStep: guard,
+            };
+            const result = await brain.handleBackground(notification.chatId, trigger, {
+              beforeStep: async () => { await guard(); if (notification.kind === 'agent_task') await checkRecipient(); },
               beforeSend: checkRecipient,
               mentionRecipient: notification.chatType === 'group'
                 ? { id: notification.reminderRecipientTelegramId, firstName: notification.reminderRecipientName } : undefined,
             });
+            if (result.terminalTool === 'finish_task') return 'skipped';
             if (result.messageId === undefined) throw new Error('Agent did not deliver a notification');
           },
         });

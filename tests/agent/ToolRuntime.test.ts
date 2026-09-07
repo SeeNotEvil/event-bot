@@ -183,7 +183,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     });
     expect(specs[8]?.parameters).toMatchObject({
       additionalProperties: false,
-      required: ['eventId', 'statuses', 'remindFrom', 'remindTo', 'limit'],
+      required: ['eventId', 'statuses', 'remindFrom', 'remindTo', 'limit', 'notificationId', 'scheduleId', 'beforeId'],
     });
     expect(specs[9]?.parameters).toMatchObject({
       additionalProperties: false,
@@ -196,7 +196,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     expect(JSON.stringify(specs[10]?.parameters)).toContain('"maxLength":4000');
   });
 
-  it('prevents a background run from replaying a user mutation', async () => {
+  it('rejects mutations without a server-bound owner', async () => {
     const transaction = vi.fn();
     const database = { transaction } as unknown as Kysely<Database>;
     const registry = new ToolRegistry().register(createDeleteEventTool(database));

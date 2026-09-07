@@ -48,7 +48,7 @@ export function createSendMessageTool(database: Kysely<Database>, telegram: Tele
       await context.beforeStep?.();
       const messageId = await telegram.sendText(context.telegramChatId, input.text, options);
       context.outgoingMessageId = messageId;
-      if (trigger?.kind === 'notification') {
+      if (trigger?.kind === 'notification' || trigger?.kind === 'agent_task') {
         const updated = await database.updateTable('notifications').set({ telegram_message_id: messageId })
           .where('id', '=', trigger.notificationId).where('status', '=', 'pending').executeTakeFirstOrThrow();
         if (Number(updated.numUpdatedRows) !== 1) throw new StaleAgentTask();

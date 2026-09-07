@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
+import { enqueueOnce } from '../scheduler/enqueue.js';
 import {
   createNotificationInputSchema,
   createNotificationOutputSchema,
@@ -47,7 +48,7 @@ export async function createNotification(
   return database.transaction().execute(async (transaction) => {
     const event = await transaction
       .selectFrom('events')
-      .select(['id', 'title', 'deadline_version'])
+      .select(['id', 'title', 'deadline_version', 'user_id'])
       .where('id', '=', input.eventId)
       .where('chat_id', '=', chatId)
       .where('status', '=', 'active')
@@ -114,9 +115,9 @@ export async function createNotification(
       });
     }
 
-    const insertion = await transaction
-      .insertInto('notifications')
-      .values({
+    const notificationId = await enqueueOnce(transaction, {
+        chat_id: chatId,
+        created_by_user_id: Number(event.user_id),
         event_id: input.eventId,
         deadline_version: Number(event.deadline_version),
         remind_at_utc: remindAtUtc,
@@ -129,17 +130,7 @@ export async function createNotification(
         sent_at: null,
         last_error: null,
         updated_at: new Date(),
-      })
-      .executeTakeFirstOrThrow();
-
-    if (insertion.insertId === undefined) {
-      throw new Error('Database did not return a notification id');
-    }
-
-    const notificationId = Number(insertion.insertId);
-    if (!Number.isSafeInteger(notificationId)) {
-      throw new Error('Notification id exceeds JavaScript safe integer range');
-    }
+      });
 
     return createNotificationOutputSchema.parse({
       success: true,

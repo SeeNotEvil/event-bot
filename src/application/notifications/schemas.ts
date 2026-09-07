@@ -11,7 +11,7 @@ export const localDateTimeSchema = z
     return parsed.isValid && parsed.toFormat(LOCAL_DATE_TIME_FORMAT) === value;
   }, 'Must be a real local date and time in YYYY-MM-DDTHH:mm format');
 
-export const notificationStatusSchema = z.enum(['pending', 'sent', 'cancelled']);
+export const notificationStatusSchema = z.enum(['pending', 'sent', 'cancelled', 'skipped']);
 
 export const notificationSchema = z.object({
   id: z.number().int().positive().safe(),
@@ -56,7 +56,7 @@ export type CreateNotificationOutput = z.infer<typeof createNotificationOutputSc
 export const searchNotificationsInputSchema = z
   .object({
     eventId: z.number().int().positive().safe().nullable(),
-    statuses: z.array(notificationStatusSchema).min(1).max(3).nullable(),
+    statuses: z.array(notificationStatusSchema).min(1).max(4).nullable(),
     remindFrom: localDateTimeSchema.nullable(),
     remindTo: localDateTimeSchema.nullable(),
     limit: z.number().int().min(1).max(100).nullable(),

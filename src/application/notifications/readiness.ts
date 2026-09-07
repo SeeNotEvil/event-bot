@@ -2,6 +2,8 @@ import type { Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import type { AgentContext, AgentTrigger } from '../../types/domain.js';
 import { StaleAgentTask } from '../StaleAgentTask.js';
+import { enqueueOnce } from '../scheduler/enqueue.js';
+import { changeEventSchedules } from '../scheduler/Scheduler.js';
 
 export async function enqueueReadinessAnswer(
   database: Kysely<Database>, chatId: number, messageId: number,
@@ -21,12 +23,13 @@ export async function enqueueReadinessAnswer(
     const now = new Date();
     await transaction.updateTable('notifications').set({ answer: Number(answer), answered_at: now })
       .where('id', '=', notificationId).execute();
-    await transaction.insertInto('notifications').values({
+    await enqueueOnce(transaction, {
+      chat_id: chatId, created_by_user_id: Number(event.user_id),
       event_id: Number(event.id), deadline_version: deadlineVersion, kind: 'readiness_response',
       source: 'automatic', remind_at_utc: now, timezone: question.timezone,
       status: 'pending', answer: Number(answer), lock_token: null, locked_at: null,
       sent_at: null, last_error: null, updated_at: now,
-    }).execute();
+    });
     return true;
   });
 }
@@ -47,6 +50,7 @@ export async function recordReadiness(database: Kysely<Database>, context: Agent
     const ready = Boolean(response.answer);
     if (!response.action_applied) {
       if (ready) {
+        await changeEventSchedules(transaction, [trigger.eventId], new Date(), true);
         await transaction.updateTable('events').set({ status: 'completed', completed_at: new Date(), updated_at: new Date() })
           .where('id', '=', trigger.eventId).execute();
         await transaction.updateTable('notifications').set({

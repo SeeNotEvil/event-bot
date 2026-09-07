@@ -44,7 +44,7 @@ export async function searchNotifications(
       'events.title as event_title',
     ])
     .where('events.chat_id', '=', chatId)
-    .where('notifications.kind', '!=', 'readiness_response')
+    .where('notifications.kind', 'in', ['reminder', 'completion_check'])
     .where('notifications.status', 'in', input.statuses ?? ['pending']);
 
   if (input.eventId !== null) {

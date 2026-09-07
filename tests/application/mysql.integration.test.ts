@@ -31,6 +31,14 @@ import {
 import { createDatabase } from '../../src/db/connection.js';
 import { migrateToLatest } from '../../src/db/migrate.js';
 import type { Database } from '../../src/db/types.js';
+import { Scheduler } from '../../src/application/scheduler/Scheduler.js';
+import { changeNotification, searchQueue } from '../../src/application/scheduler/queue.js';
+import { createMood, deleteMood, getMoodSummary, readMood, searchMoods, updateMood } from '../../src/application/moods/moods.js';
+import { createBrain } from '../../src/agent/createBrain.js';
+import { loadConfig } from '../../src/config/config.js';
+import { silentLogger } from '../helpers.js';
+import { DateTime } from 'luxon';
+import type { Response } from 'openai/resources/responses/responses';
 
 const describeWithMysql = process.env.RUN_MYSQL_TESTS === '1' ? describe : describe.skip;
 
@@ -50,6 +58,164 @@ describeWithMysql('MySQL application actions', () => {
 
   afterAll(async () => {
     await database.destroy();
+  });
+
+  it('keeps one mood diary across chats, isolates owners and aggregates edited records by local day', async () => {
+    const unique = Date.now() + 400_000;
+    const user = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Mood owner', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const other = await ensureUser(database, { telegramUserId: unique + 1, telegramChatId: unique + 1,
+      telegramUsername: null, firstName: 'Other owner', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    try {
+      const first = await createMood(database, user.id, 'Europe/Moscow', '2026-09-08T12:00:00+03:00',
+        { score: 4, comment: 'Устал', occurredAt: '2026-09-07T23:30' });
+      // The same owner logs in another chat/timezone; Moscow's next day contains this record.
+      const second = await createMood(database, user.id, 'Europe/Berlin', '2026-09-08T12:00:00+02:00',
+        { score: 8, comment: null, occurredAt: '2026-09-08T00:30' });
+      expect(await readMood(database, user.id, 'Europe/Moscow', second.id)).toMatchObject({ occurredAt: '2026-09-08T01:30', score: 8 });
+      expect(await readMood(database, other.id, 'Europe/Moscow', first.id)).toBeNull();
+      expect(await updateMood(database, other.id, 'Europe/Moscow', { id: first.id, expectedVersion: 1,
+        score: 10, comment: null, occurredAt: first.occurredAt })).toMatchObject({ success: false, reason: 'NOT_FOUND' });
+      expect(await updateMood(database, user.id, 'Europe/Moscow', { id: first.id, expectedVersion: 1,
+        score: 6, comment: 'Отдохнул', occurredAt: first.occurredAt })).toMatchObject({ success: true, mood: { version: 2, score: 6 } });
+      expect(await deleteMood(database, user.id, 'Europe/Moscow', { id: first.id, expectedVersion: 1 }))
+        .toMatchObject({ success: false, reason: 'VERSION_CONFLICT' });
+      expect(await getMoodSummary(database, user.id, 'Europe/Moscow', { from: '2026-09-07T00:00', to: '2026-09-08T00:00' }))
+        .toMatchObject({ count: 1, average: 6, minimum: 6, maximum: 6, first: { id: first.id }, last: { id: first.id } });
+      const input = { from: null, to: null, query: null, score: null, limit: 1, cursor: null };
+      const page = await searchMoods(database, user.id, 'Europe/Moscow', input);
+      expect(page.moods.map((mood) => mood.id)).toEqual([second.id]);
+      expect((await searchMoods(database, user.id, 'Europe/Moscow', { ...input, cursor: page.nextCursor })).moods.map((mood) => mood.id))
+        .toEqual([first.id]);
+      expect(await deleteMood(database, other.id, 'Europe/Moscow', { id: first.id, expectedVersion: 2 }))
+        .toMatchObject({ success: false, reason: 'NOT_FOUND' });
+      expect(await deleteMood(database, user.id, 'Europe/Moscow', { id: first.id, expectedVersion: 2 })).toMatchObject({ success: true });
+      expect(await getMoodSummary(database, user.id, 'Europe/Moscow', { from: '2026-09-07T00:00', to: '2026-09-08T00:00' }))
+        .toMatchObject({ count: 0, average: null, minimum: null, maximum: null, first: null, last: null });
+      await expect(createMood(database, user.id, 'Europe/Moscow', '2026-09-08T12:00:00+03:00',
+        { score: 11, comment: null, occurredAt: null })).rejects.toThrow();
+    } finally {
+      await database.deleteFrom('users').where('id', 'in', [user.id, other.id]).execute();
+    }
+  });
+
+  it('queues one future occurrence concurrently, preserves point cancellations, catches up and stops a claimed old version', async () => {
+    const unique = Date.now() + 500_000;
+    const user = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Schedule owner', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const chat = await ensureChat(database, { type: 'personal', userId: user.id, timezone: user.timezone });
+    const owner = { userId: user.id, chatId: chat.id, timezone: chat.timezone };
+    const scheduler = new Scheduler(database);
+    const now = new Date('2026-09-07T12:00:00Z');
+    const rule = { instruction: 'Произвольный обзор', eventId: null,
+      recurrence: { frequency: 'daily' as const, time: '09:00', weekdays: null } };
+    try {
+      const schedule = await scheduler.create(owner, now, rule);
+      const rows = () => database.selectFrom('notifications').selectAll().where('schedule_id', '=', schedule.id).orderBy('remind_at_utc').execute();
+      await Promise.all([scheduler.replenish(now, 100), new Scheduler(database).replenish(now, 100)]);
+      const first = (await rows())[0]!;
+      expect((await rows()).filter((row) => row.status === 'pending')).toHaveLength(1);
+      expect(first.remind_at_utc).toBe('2026-09-08 06:00:00.000');
+      await changeNotification(database, owner, now, Number(first.id), null);
+      await scheduler.replenish(now, 100);
+      expect((await rows()).map((row) => [row.remind_at_utc, row.status])).toEqual([
+        ['2026-09-08 06:00:00.000', 'cancelled'], ['2026-09-09 06:00:00.000', 'pending'],
+      ]);
+      const later = new Date('2026-09-12T10:00:00Z');
+      await scheduler.replenish(later, 100);
+      const pending = (await rows()).filter((row) => row.status === 'pending');
+      expect(pending.map((row) => row.remind_at_utc)).toEqual(['2026-09-12 06:00:00.000', '2026-09-13 06:00:00.000']);
+      expect((await rows()).find((row) => row.remind_at_utc === '2026-09-09 06:00:00.000')?.status).toBe('skipped');
+      let attempted = false;
+      const result = await processDueNotifications(database, { now: later, batchSize: 10, lockTimeoutMs: 60_000,
+        notificationIds: pending.map((row) => Number(row.id)), run: async (_job, guard) => {
+          await scheduler.update(owner, later, { ...rule, instruction: 'Исправленное поручение', scheduleId: schedule.id, expectedVersion: 1, enabled: true });
+          await guard();
+          attempted = true;
+        } });
+      expect(attempted).toBe(false);
+      expect(result).toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
+      expect((await rows()).some((row) => row.status === 'pending')).toBe(false);
+      await scheduler.replenish(later, 100);
+      expect((await rows()).filter((row) => row.status === 'pending')).toHaveLength(1);
+      await scheduler.delete(owner, later, { scheduleId: schedule.id, expectedVersion: 2 });
+      await scheduler.replenish(new Date('2026-10-01T12:00:00Z'), 100);
+      expect((await rows()).some((row) => row.status === 'pending')).toBe(false);
+
+      const event = await createEvent(database, chat.id, user.id,
+        { title: 'Связанная задача', description: null, dateFrom: '2026-10-10', dateTo: null, time: null });
+      const linked = await scheduler.create(owner, now, { ...rule, eventId: event.id });
+      await scheduler.replenish(now, 100);
+      const moved = await rescheduleEvent(database, chat.id, chat.timezone, '2026-09-08T12:00:00+03:00',
+        { eventId: event.id, dateFrom: '2026-10-11', dateTo: null, time: null, reminderTimes: null });
+      expect(moved).toMatchObject({ success: true, event: { deadlineVersion: 2 } });
+      await scheduler.replenish(later, 100);
+      const linkedPending = await database.selectFrom('notifications').selectAll()
+        .where('schedule_id', '=', linked.id).where('status', '=', 'pending').execute();
+      expect(linkedPending.length).toBeGreaterThan(0);
+      expect(linkedPending.every((row) => Number(row.deadline_version) === 2)).toBe(true);
+      await completeEvent(database, chat.id, { eventId: event.id });
+      expect((await database.selectFrom('schedules').select('enabled').where('id', '=', linked.id).executeTakeFirstOrThrow()).enabled).toBe(0);
+      expect(await database.selectFrom('notifications').select('id').where('schedule_id', '=', linked.id).where('status', '=', 'pending').execute()).toEqual([]);
+
+      const muted = await createEvent(database, chat.id, user.id,
+        { title: 'Отключённые напоминания', description: null, dateFrom: null, dateTo: null, time: null });
+      const off = { eventIds: [muted.id], mode: 'off' as const, reminderTimes: null, checkCompletion: false };
+      await configureNotifications(database, chat.id, chat.timezone, '2026-09-08T12:00:00+03:00', off);
+      const explicit = await scheduler.create(owner, now, { ...rule, eventId: muted.id });
+      expect(await configureNotifications(database, chat.id, chat.timezone, '2026-09-08T12:00:00+03:00', off)).toMatchObject({ changed: true });
+      expect((await database.selectFrom('schedules').select('enabled').where('id', '=', explicit.id).executeTakeFirstOrThrow()).enabled).toBe(0);
+    } finally {
+      await database.deleteFrom('users').where('id', '=', user.id).execute();
+    }
+  });
+
+  it('runs a persisted task as its owner and can schedule from background and finish without sending', async () => {
+    const unique = Date.now() + 600_000;
+    const user = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Background owner', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const chat = await ensureChat(database, { type: 'personal', userId: user.id, timezone: user.timezone });
+    const owner = { userId: user.id, chatId: chat.id, timezone: chat.timezone };
+    const scheduler = new Scheduler(database);
+    const now = new Date('2026-09-08T12:00:00Z');
+    try {
+      const once = await scheduler.once(owner, new Date('2026-09-07T12:00:00Z'),
+        { instruction: 'Поставь обзор на завтра и закончи без сообщения', eventId: null, remindAt: '2026-09-08T14:00' });
+      const queue = await searchQueue(database, owner, { eventId: null, scheduleId: null, notificationId: once.notificationId,
+        remindFrom: null, remindTo: null, statuses: null, limit: null, beforeId: null });
+      expect(queue.notifications).toHaveLength(1); // one-offs are immediately visible, before the worker runs
+      const calls = [
+        { name: 'create_schedule', args: { instruction: 'Недельный обзор', eventId: null,
+          recurrence: { frequency: 'weekly', time: '09:00', weekdays: [1] } } },
+        { name: 'finish_task', args: {} },
+      ];
+      const client = { create: vi.fn(async () => {
+        const call = calls.shift();
+        if (!call) throw new Error('Unexpected agent step');
+        return { output: [{ type: 'function_call', name: call.name, call_id: 'test', arguments: JSON.stringify(call.args) }] } as Response;
+      }) };
+      const sendText = vi.fn(async () => 123);
+      const telegram = { sendText, editText: vi.fn(async () => undefined), clearButtons: vi.fn(async () => undefined),
+        getChatMember: vi.fn(async () => ({ status: 'member' as const, user: { id: unique, is_bot: false, first_name: 'Owner' } })) };
+      const config = loadConfig({ NODE_ENV: 'test', TELEGRAM_BOT_TOKEN: '123:token', OPENAI_API_KEY: 'test', MYSQL_PASSWORD: 'test' });
+      const brain = createBrain(database, telegram, client, config, silentLogger, () => DateTime.fromJSDate(now));
+      const result = await processDueNotifications(database, { now, batchSize: 10, lockTimeoutMs: 60_000,
+        notificationIds: [once.notificationId], run: async (job, guard) => {
+          if (job.kind !== 'agent_task') throw new Error('Expected an agent task');
+          const run = await brain.handleBackground(chat.id, { kind: 'agent_task', notificationId: job.notificationId,
+            instruction: job.instruction, timezone: job.timezone, scheduledFor: job.scheduledFor, scheduleId: job.scheduleId, eventId: job.eventId }, { beforeStep: guard });
+          expect(run.terminalTool).toBe('finish_task');
+          return 'skipped';
+        } });
+      expect(result).toMatchObject({ claimed: 1, sent: 0, skipped: 1, failed: 0 });
+      expect(sendText).not.toHaveBeenCalled();
+      const schedules = await scheduler.search(owner, { scheduleId: null, enabled: null, beforeId: null, limit: null });
+      expect(schedules.schedules).toHaveLength(1);
+      expect(schedules.schedules[0]).toMatchObject({ instruction: 'Недельный обзор', enabled: true });
+      expect((await database.selectFrom('notifications').select('status').where('id', '=', once.notificationId).executeTakeFirstOrThrow()).status).toBe('skipped');
+    } finally {
+      await database.deleteFrom('users').where('id', '=', user.id).execute();
+    }
   });
 
   it('isolates private and group memories and rejects stale updates and deletions', async () => {

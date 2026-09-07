@@ -39,6 +39,8 @@ export type AgentContext = {
 };
 
 export type AgentTrigger =
+  | { kind: 'agent_task'; notificationId: number; instruction: string; scheduledFor: string;
+      timezone: string; scheduleId: number | null; eventId: number | null }
   | { kind: 'notification'; notificationId: number; eventId: number; deadlineVersion: number;
       notificationKind: 'reminder' | 'completion_check' | 'readiness_response'; answer: boolean | null }
   | { kind: 'reschedule_reply'; eventId: number; deadlineVersion: number }

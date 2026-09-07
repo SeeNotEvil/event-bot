@@ -95,16 +95,22 @@ export interface ThreadsTable {
 
 export interface NotificationsTable {
   id: Generated<number>;
-  event_id: number;
+  event_id: number | null;
+  chat_id: number;
+  created_by_user_id: number;
+  schedule_id: Generated<number | null>;
+  schedule_version: Generated<number | null>;
+  payload: ColumnType<unknown, string | undefined, string>;
+  version: Generated<number>;
   remind_at_utc: DateTimeColumn;
   timezone: string;
-  status: 'pending' | 'sent' | 'cancelled';
+  status: 'pending' | 'sent' | 'cancelled' | 'skipped';
   attempts: Generated<number>;
   lock_token: string | null;
   locked_at: NullableDateTimeColumn;
   sent_at: NullableDateTimeColumn;
   last_error: string | null;
-  kind: Generated<'reminder' | 'completion_check' | 'readiness_response'>;
+  kind: Generated<'reminder' | 'completion_check' | 'readiness_response' | 'agent_task'>;
   source: Generated<'manual' | 'automatic'>;
   deadline_version: Generated<number>;
   telegram_message_id: Generated<number | null>;
@@ -112,6 +118,36 @@ export interface NotificationsTable {
   action_applied: Generated<number>;
   answered_at: NullableDateTimeColumn;
   retry_at: NullableDateTimeColumn;
+  created_at: CreatedTimestamp;
+  updated_at: UpdatedTimestamp;
+}
+
+export interface MoodEntriesTable {
+  id: Generated<number>;
+  user_id: number;
+  score: number;
+  comment: string | null;
+  occurred_at_utc: DateTimeColumn;
+  timezone: string;
+  version: Generated<number>;
+  created_at: CreatedTimestamp;
+  updated_at: UpdatedTimestamp;
+}
+
+export interface SchedulesTable {
+  id: Generated<number>;
+  created_by_user_id: number;
+  chat_id: number;
+  event_id: number | null;
+  kind: 'agent_task';
+  payload: ColumnType<unknown, string, string>;
+  recurrence: 'daily' | 'weekly';
+  local_time: string;
+  weekdays: ColumnType<unknown, string | null, string | null>;
+  timezone: string;
+  next_run_at_utc: NullableDateTimeColumn;
+  enabled: Generated<number>;
+  version: Generated<number>;
   created_at: CreatedTimestamp;
   updated_at: UpdatedTimestamp;
 }
@@ -124,4 +160,6 @@ export interface Database {
   threads: ThreadsTable;
   memories: MemoriesTable;
   notifications: NotificationsTable;
+  mood_entries: MoodEntriesTable;
+  schedules: SchedulesTable;
 }

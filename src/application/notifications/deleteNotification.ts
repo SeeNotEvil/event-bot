@@ -30,7 +30,7 @@ export async function deleteNotification(
       ])
       .where('notifications.id', '=', input.notificationId)
       .where('events.chat_id', '=', chatId)
-      .where('notifications.kind', '!=', 'readiness_response')
+      .where('notifications.kind', 'in', ['reminder', 'completion_check'])
       .where('notifications.status', '=', 'pending')
       .forUpdate()
       .executeTakeFirst();

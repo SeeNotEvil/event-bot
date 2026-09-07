@@ -56,15 +56,23 @@ export class BotBrain {
       .where('chats.id', '=', chatId).executeTakeFirstOrThrow();
     const destination = row.type === 'group' ? row.group_chat : row.personal_chat;
     if (destination === null) throw new Error('Chat has no Telegram destination');
+    const job = trigger.kind === 'agent_task' || trigger.kind === 'notification'
+      ? await this.database.selectFrom('notifications').innerJoin('users as actor', 'actor.id', 'notifications.created_by_user_id')
+        .select(['actor.id', 'actor.telegram_user_id', 'actor.first_name', 'actor.last_name', 'actor.telegram_username'])
+        .where('notifications.id', '=', trigger.notificationId).where('notifications.chat_id', '=', chatId).executeTakeFirstOrThrow()
+      : null;
+    if (row.type === 'personal' && job && Number(job.id) !== Number(row.owner_id)) throw new Error('Task owner does not own this personal chat');
     const { history, memory, threadId } = await this.memoryBuilder.build({ id: chatId, type: row.type,
       userId: row.owner_id === null ? null : Number(row.owner_id) }, JSON.stringify(trigger));
-    const now = this.clock().setZone(row.timezone).toISO({ suppressMilliseconds: true });
+    const timezone = trigger.kind === 'agent_task' ? trigger.timezone : row.timezone;
+    const now = this.clock().setZone(timezone).toISO({ suppressMilliseconds: true });
     if (!now) throw new Error('Invalid chat timezone');
     const context: AgentContext = {
-      userId: null, chatId, threadId, memory, chatType: row.type, chatTitle: row.title,
-      telegramUserId: null, telegramChatId: Number(destination), telegramChatType: row.type === 'group' ? 'supergroup' : 'private',
-      firstName: row.type === 'personal' ? row.first_name : null, displayName: null, telegramUsername: null,
-      userPreferences: row.type === 'personal' ? memory.profile?.content ?? null : null, timezone: row.timezone, now, trigger, ...hooks,
+      userId: job ? Number(job.id) : null, chatId, threadId, memory, chatType: row.type, chatTitle: row.title,
+      telegramUserId: job ? Number(job.telegram_user_id) : null, telegramChatId: Number(destination), telegramChatType: row.type === 'group' ? 'supergroup' : 'private',
+      firstName: job?.first_name ?? (row.type === 'personal' ? row.first_name : null),
+      displayName: job ? [job.first_name, job.last_name].filter(Boolean).join(' ') : null, telegramUsername: job?.telegram_username ?? null,
+      userPreferences: row.type === 'personal' ? memory.profile?.content ?? null : null, timezone, now, trigger, ...hooks,
     };
     const result = await this.run(JSON.stringify({ scheduled_event: trigger }), history, context);
     return { ...result, messageId: context.outgoingMessageId };

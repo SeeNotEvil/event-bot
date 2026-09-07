@@ -23,7 +23,7 @@ export async function rescheduleEvent(
         .where('status', '=', 'active').forUpdate().executeTakeFirst();
       if (!event) return failure('EVENT_NOT_FOUND_OR_INACTIVE');
       const pending = await transaction.selectFrom('notifications').selectAll()
-        .where('event_id', '=', input.eventId).where('status', '=', 'pending').forUpdate().execute();
+        .where('event_id', '=', input.eventId).where('status', '=', 'pending').execute();
       if (input.reminderTimes === null && pending.some((row) => row.kind === 'reminder' && row.source === 'manual')) {
         return failure('CUSTOM_REMINDER_TIMES_REQUIRED');
       }
@@ -45,7 +45,7 @@ export async function rescheduleEvent(
       const updatedEvent = { ...event, date_from: input.dateFrom, date_to: input.dateTo, time: input.time,
         deadline_version: Number(event.deadline_version) + Number(scheduleChanged) };
       if (scheduleChanged) {
-        cancelledCount = await cancelPendingEventNotifications(transaction, [input.eventId], new Date());
+        cancelledCount = await cancelPendingEventNotifications(transaction, [input.eventId], new Date(), false);
         await transaction.updateTable('events').set({
           date_from: input.dateFrom, date_to: input.dateTo, time: input.time,
           deadline_version: updatedEvent.deadline_version, updated_at: new Date(),
@@ -56,7 +56,7 @@ export async function rescheduleEvent(
       const changed = scheduleChanged || plan.changed;
       const notifications = await transaction.selectFrom('notifications').selectAll()
         .where('event_id', '=', input.eventId).where('status', '=', 'pending')
-        .where('kind', '!=', 'readiness_response').orderBy('remind_at_utc').orderBy('id').execute();
+        .where('kind', 'in', ['reminder', 'completion_check']).orderBy('remind_at_utc').orderBy('id').execute();
       return rescheduleEventOutputSchema.parse({
         success: true, changed,
         event: mapEvent({ ...updatedEvent, reminder_mode: mode, check_completion: Number(checkCompletion) }),

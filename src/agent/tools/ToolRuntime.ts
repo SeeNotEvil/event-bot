@@ -50,7 +50,7 @@ export class ToolRuntime {
     }
 
     if (tool.requiresUser && context.userId === null) {
-      return this.failure('INVALID_CONTEXT', 'Это действие требует текущего поручения пользователя. В фоне выполняй только текущее задание; ответ кнопки применяется через record_readiness.', false);
+      return this.failure('INVALID_CONTEXT', 'Сервер не определил владельца этого действия.', false);
     }
     if (tool.availableWhen && !tool.availableWhen(context)) {
       return this.failure('INVALID_CONTEXT', 'Инструмент недоступен в текущем контексте.', false);
@@ -67,6 +67,7 @@ export class ToolRuntime {
 
     let rawOutput: unknown;
     try {
+      await context.beforeStep?.();
       rawOutput = await tool.execute(context, input.data);
     } catch (error) {
       if (error instanceof StaleAgentTask || error instanceof RecipientMembershipError) throw error;

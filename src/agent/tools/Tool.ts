@@ -9,6 +9,7 @@ export type ToolDefinition<Input, Output> = {
   input: ZodType<Input>;
   output: ZodType<Output>;
   terminal?: boolean;
+  /** Requires the message author or a server-bound scheduled task owner. */
   requiresUser?: boolean;
   availableWhen?: (context: AgentContext) => boolean;
   execute: (context: AgentContext, input: Input) => Promise<Output>;

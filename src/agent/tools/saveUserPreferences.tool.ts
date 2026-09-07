@@ -6,7 +6,7 @@ import {
 } from '../../application/users/userPreferences.js';
 import type { Database } from '../../db/types.js';
 import { defineTool } from './Tool.js';
-import { canWriteMemory } from './memory.tools.js';
+import { canWriteMemory, memorySource } from './memory.tools.js';
 import { MysqlMemoryStore } from '../../application/memory/MysqlMemoryStore.js';
 
 export function createSaveUserPreferencesTool(database: Kysely<Database>) {
@@ -19,9 +19,9 @@ export function createSaveUserPreferencesTool(database: Kysely<Database>) {
     input: saveUserPreferencesInputSchema,
     output: saveUserPreferencesOutputSchema,
     execute: async (context, input) => {
-      if (context.userId === null || context.chatType !== 'personal' || !canWriteMemory(context)) throw new Error('A private user request is required to change preferences');
+      if (context.userId === null || context.chatType !== 'personal' || !canWriteMemory(context)) throw new Error('A personal owner context is required to change preferences');
       const result = await saveUserPreferences(database, context.userId, input,
-        { messageId: context.sourceMessageId!, label: 'addressed_message' }, context.memory?.profile?.version ?? null);
+        memorySource(context), context.memory?.profile?.version ?? null);
       context.userPreferences = result.preferences;
       if (context.memory) context.memory.profile = await new MysqlMemoryStore(database).get(context.memory.namespace, 'profile');
       return result;

@@ -9,9 +9,14 @@ function namespace(context: AgentContext) {
 }
 
 export function canWriteMemory(context: AgentContext) {
-  return context.userId !== null && context.sourceMessageId !== undefined
-    && context.trigger?.kind !== 'notification'
+  return context.userId !== null && (context.sourceMessageId !== undefined
+    || context.trigger?.kind === 'agent_task' || context.trigger?.kind === 'notification')
     && context.trigger?.kind !== 'service';
+}
+
+export function memorySource(context: AgentContext) {
+  return { messageId: context.sourceMessageId ?? null,
+    label: context.sourceMessageId === undefined ? 'scheduled_task' : 'addressed_message' };
 }
 
 export function createSearchMemoryTool(store: MemoryStore) {
@@ -29,8 +34,8 @@ export function createSaveMemoryTool(store: MemoryStore) {
     description: 'Создаёт или обновляет устойчивый факт (semantic), полезный прошлый опыт (episodic) либо пожелание/правило чата (procedural) из текущего обращения к тебе. Область и источник задаёт сервер. Одна запись — один понятный факт с устойчивым ключом. Сначала найди существующую запись; для новой expectedVersion=null, для изменения — прочитанная версия. При конфликте перечитай и учти свежие сведения. Не сохраняй догадки, секреты, текущие статусы задач или факты из окружающей переписки без обращения. Ключ profile зарезервирован для цельной памятки предпочтений.',
     input: memoryWriteSchema, output: memoryResultSchema,
     execute: async (context, input) => {
-      if (!canWriteMemory(context)) throw new Error('An addressed message is required');
-      const result = await store.save(namespace(context), input, { messageId: context.sourceMessageId!, label: 'addressed_message' });
+      if (!canWriteMemory(context)) throw new Error('A task owner and source context are required');
+      const result = await store.save(namespace(context), input, memorySource(context));
       if (result.success && input.key === 'profile' && context.memory) {
         context.memory.profile = result.memory;
         if (context.chatType === 'personal') context.userPreferences = result.memory?.content ?? null;
@@ -47,7 +52,7 @@ export function createForgetMemoryTool(store: MemoryStore) {
     input: z.object({ id: z.number().int().positive().safe(), expectedVersion: z.number().int().positive() }),
     output: memoryResultSchema,
     execute: async (context, input) => {
-      if (!canWriteMemory(context)) throw new Error('An addressed message is required');
+      if (!canWriteMemory(context)) throw new Error('A task owner and source context are required');
       const result = await store.forget(namespace(context), input.id, input.expectedVersion);
       if (result.success && context.memory) {
         if (context.memory.profile?.id === input.id) { context.memory.profile = null; context.userPreferences = null; }

@@ -71,7 +71,7 @@ export async function searchSchedule(
         .selectFrom('notifications')
         .select('notifications.id')
         .whereRef('notifications.event_id', '=', 'events.id')
-        .where('notifications.kind', '!=', 'readiness_response')
+        .where('notifications.kind', 'in', ['reminder', 'completion_check'])
         .where('notifications.status', 'in', reminderStatuses);
 
       if (reminderFromUtc !== null) {
@@ -119,7 +119,7 @@ export async function searchSchedule(
       'events.title as event_title',
     ])
     .where('events.chat_id', '=', chatId)
-    .where('notifications.kind', '!=', 'readiness_response')
+    .where('notifications.kind', 'in', ['reminder', 'completion_check'])
     .where('notifications.event_id', 'in', eventIds)
     .where('notifications.status', 'in', reminderStatuses);
 

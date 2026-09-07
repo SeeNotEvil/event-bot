@@ -4,6 +4,8 @@ import { z } from 'zod';
 import type { Database, EventsTable } from '../../db/types.js';
 import { localDateTimeSchema } from './schemas.js';
 import { formatDateForDatabase, parseLocalDateTime } from './time.js';
+import { enqueueOnce } from '../scheduler/enqueue.js';
+import { changeEventSchedules } from '../scheduler/Scheduler.js';
 
 export type ReminderMode = 'default' | 'custom' | 'off';
 export type NotificationTarget = { kind: 'reminder' | 'completion_check'; at: string; source: 'automatic' | 'manual' };
@@ -46,7 +48,7 @@ export async function replaceNotificationPlan(
   const targets = planNotifications({ dateFrom: event.date_from, dateTo: event.date_to }, timezone, now, mode, reminderTimes, checkCompletion);
   const existing = await database.selectFrom('notifications').selectAll()
     .where('event_id', '=', Number(event.id)).where('deadline_version', '=', Number(event.deadline_version))
-    .where('kind', '!=', 'readiness_response').forUpdate().execute();
+    .where('kind', 'in', ['reminder', 'completion_check']).forUpdate().execute();
   // A check already pending/sent belongs to this deadline. Reapplying settings
   // must neither postpone a missed check nor ask again after its answer.
   const previousCheck = existing.find((row) => row.kind === 'completion_check' && row.status !== 'cancelled');
@@ -77,10 +79,11 @@ export async function replaceNotificationPlan(
     if (previous) {
       await database.updateTable('notifications').set(values).where('id', '=', Number(previous.id)).execute();
     } else {
-      await database.insertInto('notifications').values({
+      await enqueueOnce(database, {
+        chat_id: Number(event.chat_id), created_by_user_id: Number(event.user_id),
         ...values, event_id: Number(event.id), deadline_version: Number(event.deadline_version),
         kind: target.kind, remind_at_utc: target.at,
-      }).execute();
+      });
     }
     changes++;
   }
@@ -113,6 +116,12 @@ export async function configureNotifications(
     if (events.length !== parsed.eventIds.length) throw new Error('EVENT_NOT_FOUND_OR_INACTIVE');
     let changed = false;
     for (const event of events) {
+      if (parsed.mode === 'off') {
+        const stopped = await changeEventSchedules(transaction, [Number(event.id)], new Date(), true);
+        const cancelled = await transaction.updateTable('notifications').set({ status: 'cancelled', lock_token: null, locked_at: null, retry_at: null })
+          .where('event_id', '=', Number(event.id)).where('kind', '=', 'agent_task').where('status', '=', 'pending').executeTakeFirstOrThrow();
+        changed ||= stopped > 0 || Number(cancelled.numUpdatedRows) > 0;
+      }
       const result = await replaceNotificationPlan(transaction, event, timezone, now,
         parsed.mode, parsed.reminderTimes ?? [], parsed.checkCompletion);
       changed ||= result.changed;

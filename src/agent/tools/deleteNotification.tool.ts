@@ -1,8 +1,8 @@
 import type { Kysely } from 'kysely';
-import { deleteNotification } from '../../application/notifications/deleteNotification.js';
+import { changeNotification, queueChangeSchema } from '../../application/scheduler/queue.js';
+import { scheduleOwner } from './scheduler.tools.js';
 import {
   deleteNotificationInputSchema,
-  deleteNotificationOutputSchema,
 } from '../../application/notifications/schemas.js';
 import type { Database } from '../../db/types.js';
 import { defineTool } from './Tool.js';
@@ -12,9 +12,9 @@ export function createDeleteNotificationTool(database: Kysely<Database>) {
     name: 'delete_notification',
     requiresUser: true,
     description:
-      'Мягко отменяет одно однозначно выбранное pending-напоминание текущего календаря. notificationId должен происходить из свежего search_notifications; при нескольких подходящих вариантах сначала требуется уточнение. Sent-напоминание отменить нельзя.',
+      'Отменяет одно выбранное pending-уведомление текущего чата: напоминание задачи или собственное agent_task. ID возьми из search_notifications. У повторяющегося расписания пропускается только этот запуск; воркер не создаст его заново. Для остановки всей серии используй delete_schedule.',
     input: deleteNotificationInputSchema,
-    output: deleteNotificationOutputSchema,
-    execute: (context, input) => deleteNotification(database, context.chatId, input),
+    output: queueChangeSchema,
+    execute: (context, input) => changeNotification(database, scheduleOwner(context), new Date(context.now), input.notificationId, null),
   });
 }
