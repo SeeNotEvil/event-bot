@@ -34,6 +34,7 @@ import type { Database } from '../../src/db/types.js';
 import { Scheduler } from '../../src/application/scheduler/Scheduler.js';
 import { changeNotification, searchQueue } from '../../src/application/scheduler/queue.js';
 import { createMood, deleteMood, getMoodSummary, readMood, searchMoods, updateMood } from '../../src/application/moods/moods.js';
+import { createNote, deleteNote, readNote, searchNotes, updateNote } from '../../src/application/notes/notes.js';
 import { createBrain } from '../../src/agent/createBrain.js';
 import { loadConfig } from '../../src/config/config.js';
 import { silentLogger } from '../helpers.js';
@@ -58,6 +59,72 @@ describeWithMysql('MySQL application actions', () => {
 
   afterAll(async () => {
     await database.destroy();
+  });
+
+  it('isolates notes by chat, searches full documents and protects shared edits and deletion with versions', async () => {
+    const unique = Date.now() + 700_000;
+    const author = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
+      telegramUsername: null, firstName: 'Note author', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const member = await ensureUser(database, { telegramUserId: unique + 1, telegramChatId: unique + 1,
+      telegramUsername: null, firstName: 'Note reader', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const personal = await ensureChat(database, { type: 'personal', userId: author.id, timezone: author.timezone });
+    const otherPersonal = await ensureChat(database, { type: 'personal', userId: member.id, timezone: member.timezone });
+    const group = await ensureChat(database, { type: 'group', telegramChatId: -unique, title: 'Notes group', timezone: author.timezone });
+    const input = { query: null, tag: null, beforeId: null, limit: null };
+    try {
+      const privateNote = await createNote(database, personal.id, author.id,
+        { title: 'Личное', content: 'Личный документ', tags: [] });
+      const original = { title: 'Поездка', content: `- [ ] Паспорт\n${'🧳'.repeat(350)}\nСкидка 50%_! и зарядка`, tags: [' Поездка ', 'поездка', 'СБОРЫ'] };
+      const shared = await createNote(database, group.id, author.id, original);
+      expect(shared.tags).toEqual(['поездка', 'сборы']);
+      expect(await readNote(database, group.id, { id: privateNote.id })).toBeNull();
+      expect(await readNote(database, otherPersonal.id, { id: privateNote.id })).toBeNull();
+      expect((await searchNotes(database, otherPersonal.id, input)).notes).toEqual([]);
+      expect(await updateNote(database, group.id, { ...original, id: privateNote.id, expectedVersion: 1 }))
+        .toMatchObject({ success: false, reason: 'NOT_FOUND', note: null });
+      expect(await deleteNote(database, otherPersonal.id, { id: shared.id, expectedVersion: 1 }))
+        .toMatchObject({ success: false, reason: 'NOT_FOUND', note: null });
+      // The literal search term is beyond the excerpt and contains LIKE metacharacters.
+      const found = await searchNotes(database, group.id, { ...input, query: '50%_!', tag: ' ПОЕЗДКА ' });
+      expect(found.notes.map((note) => note.id)).toEqual([shared.id]);
+      expect(found.notes[0]).toMatchObject({ contentTruncated: true });
+      expect(found.notes[0]?.excerpt).not.toContain('зарядка');
+      expect(found.notes[0]).not.toHaveProperty('content');
+      expect((await searchNotes(database, group.id, { ...input, query: 'Поездка' })).notes.map((note) => note.id)).toEqual([shared.id]);
+      expect((await searchNotes(database, group.id, { ...input, tag: 'поезд' })).notes).toEqual([]);
+      expect((await readNote(database, group.id, { id: shared.id }))?.content).toBe(original.content);
+
+      const second = await createNote(database, group.id, member.id, { title: 'Покупки: скидка 50abc!', content: '', tags: [] });
+      expect((await searchNotes(database, group.id, { ...input, query: '50%_!' })).notes.map((note) => note.id)).toEqual([shared.id]);
+      const page = await searchNotes(database, group.id, { ...input, limit: 1 });
+      expect(page.notes.map((note) => note.id)).toEqual([second.id]);
+      const next = await searchNotes(database, group.id, { ...input, limit: 1, beforeId: page.nextBeforeId });
+      expect(next.notes.map((note) => note.id)).toEqual([shared.id]);
+      expect(next.nextBeforeId).toBeNull();
+
+      const updates = await Promise.all([
+        updateNote(database, group.id, { ...original, id: shared.id, expectedVersion: 1, content: `${original.content}\n- [ ] Билеты` }),
+        updateNote(database, group.id, { ...original, id: shared.id, expectedVersion: 1, content: `${original.content}\n- [ ] Наушники` }),
+      ]);
+      expect(updates.filter((result) => result.success)).toHaveLength(1);
+      const winner = updates.find((result) => result.success)!.note!;
+      expect(updates.find((result) => !result.success)).toMatchObject({ reason: 'VERSION_CONFLICT', note: winner });
+      expect(winner).toMatchObject({ createdByUserId: author.id, createdAtUtc: shared.createdAtUtc, version: 2 });
+      expect(await deleteNote(database, group.id, { id: shared.id, expectedVersion: 1 }))
+        .toMatchObject({ success: false, reason: 'VERSION_CONFLICT', note: winner });
+      const edited = await updateNote(database, group.id, { id: shared.id, expectedVersion: 2,
+        title: 'Сборы в поездку', content: winner.content.replace('- [ ] Паспорт', '- [x] Паспорт'), tags: [] });
+      expect(edited.note).toMatchObject({ title: 'Сборы в поездку', tags: [], version: 3 });
+      expect(edited.note?.content).toContain('- [x] Паспорт');
+      expect(edited.note?.content).toContain('зарядка');
+      expect((await searchNotes(database, group.id, { ...input, tag: 'поездка' })).notes).toEqual([]);
+      expect(await deleteNote(database, group.id, { id: shared.id, expectedVersion: 3 })).toMatchObject({ success: true, note: null });
+      expect(await readNote(database, group.id, { id: shared.id })).toBeNull();
+      expect((await searchNotes(database, group.id, input)).notes.map((note) => note.id)).toEqual([second.id]);
+    } finally {
+      await database.deleteFrom('chats').where('id', '=', group.id).execute();
+      await database.deleteFrom('users').where('id', 'in', [author.id, member.id]).execute();
+    }
   });
 
   it('keeps one mood diary across chats, isolates owners and aggregates edited records by local day', async () => {
@@ -180,13 +247,14 @@ describeWithMysql('MySQL application actions', () => {
     const now = new Date('2026-09-08T12:00:00Z');
     try {
       const once = await scheduler.once(owner, new Date('2026-09-07T12:00:00Z'),
-        { instruction: 'Поставь обзор на завтра и закончи без сообщения', eventId: null, remindAt: '2026-09-08T14:00' });
+        { instruction: 'Поставь недельный обзор, сохрани заметку и закончи без сообщения', eventId: null, remindAt: '2026-09-08T14:00' });
       const queue = await searchQueue(database, owner, { eventId: null, scheduleId: null, notificationId: once.notificationId,
         remindFrom: null, remindTo: null, statuses: null, limit: null, beforeId: null });
       expect(queue.notifications).toHaveLength(1); // one-offs are immediately visible, before the worker runs
       const calls = [
         { name: 'create_schedule', args: { instruction: 'Недельный обзор', eventId: null,
           recurrence: { frequency: 'weekly', time: '09:00', weekdays: [1] } } },
+        { name: 'create_note', args: { title: 'План обзора', content: 'Собрать задачи и настроение за неделю.', tags: ['обзор'] } },
         { name: 'finish_task', args: {} },
       ];
       const client = { create: vi.fn(async () => {
@@ -212,6 +280,9 @@ describeWithMysql('MySQL application actions', () => {
       const schedules = await scheduler.search(owner, { scheduleId: null, enabled: null, beforeId: null, limit: null });
       expect(schedules.schedules).toHaveLength(1);
       expect(schedules.schedules[0]).toMatchObject({ instruction: 'Недельный обзор', enabled: true });
+      const notes = await searchNotes(database, chat.id, { query: null, tag: null, beforeId: null, limit: null });
+      expect(notes.notes).toHaveLength(1);
+      expect(notes.notes[0]).toMatchObject({ title: 'План обзора', createdByUserId: user.id, version: 1 });
       expect((await database.selectFrom('notifications').select('status').where('id', '=', once.notificationId).executeTakeFirstOrThrow()).status).toBe('skipped');
     } finally {
       await database.deleteFrom('users').where('id', '=', user.id).execute();

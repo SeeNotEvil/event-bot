@@ -134,6 +134,18 @@ export interface MoodEntriesTable {
   updated_at: UpdatedTimestamp;
 }
 
+export interface NotesTable {
+  id: Generated<number>;
+  chat_id: number;
+  created_by_user_id: number;
+  title: string;
+  content: string;
+  tags: ColumnType<unknown, string, string>;
+  version: Generated<number>;
+  created_at: CreatedTimestamp;
+  updated_at: UpdatedTimestamp;
+}
+
 export interface SchedulesTable {
   id: Generated<number>;
   created_by_user_id: number;
@@ -161,5 +173,6 @@ export interface Database {
   memories: MemoriesTable;
   notifications: NotificationsTable;
   mood_entries: MoodEntriesTable;
+  notes: NotesTable;
   schedules: SchedulesTable;
 }

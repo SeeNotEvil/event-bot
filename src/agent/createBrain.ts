@@ -13,6 +13,7 @@ import { ToolRegistry } from './tools/ToolRegistry.js';
 import { ToolRuntime } from './tools/ToolRuntime.js';
 import type { AnyTool } from './tools/Tool.js';
 import { createMoodTools } from './tools/mood.tools.js';
+import { createNoteTools } from './tools/note.tools.js';
 import { createSchedulerTools } from './tools/scheduler.tools.js';
 import { createCreateEventsTool } from './tools/createEvents.tool.js';
 import { createSearchEventsTool } from './tools/searchEvents.tool.js';
@@ -47,7 +48,7 @@ export function createBrain(database: Kysely<Database>, telegram: TelegramGatewa
     .register(createDeleteNotificationTool(database)).register(createConfigureNotificationsTool(database))
     .register(createRecordReadinessTool(database)).register(createSaveUserPreferencesTool(database))
     .register(createSendMessageTool(database, telegram)).register(createSkipReplyTool());
-  for (const tool of [...createMoodTools(database), ...createSchedulerTools(database)]) registry.register(tool as AnyTool);
+  for (const tool of [...createMoodTools(database), ...createNoteTools(database), ...createSchedulerTools(database)]) registry.register(tool as AnyTool);
   const runtime = new AgentRuntime(client, registry, new ToolRuntime(registry, logger),
     config.openai.model, config.openai.maxOutputTokens, config.maxAgentSteps, logger);
   return new BotBrain(database, runtime, threads, memoryBuilder, logger, clock);

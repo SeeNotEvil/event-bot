@@ -16,6 +16,7 @@ import * as agentWorkflowsMigration from './migrations/007_agent_workflows.js';
 import * as threadMemoryMigration from './migrations/008_thread_memory.js';
 import * as reminderRecipientMigration from './migrations/009_reminder_recipient.js';
 import * as schedulerMoodsMigration from './migrations/010_scheduler_moods.js';
+import * as notesMigration from './migrations/011_notes.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -31,6 +32,7 @@ const migrationProvider: MigrationProvider = {
       '008_thread_memory': threadMemoryMigration,
       '009_reminder_recipient': reminderRecipientMigration,
       '010_scheduler_moods': schedulerMoodsMigration,
+      '011_notes': notesMigration,
     }),
 };
 
