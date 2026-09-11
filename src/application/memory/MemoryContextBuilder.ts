@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import type { Chat } from '../../types/domain.js';
 import type { Memory, MemoryNamespace, MemoryPage, MemoryStore } from './MemoryStore.js';
 import type { ThreadMemory } from './ThreadMemory.js';
@@ -25,9 +26,18 @@ export class MemoryContextBuilder {
       this.memories.search(namespace, { query: null, kind: 'procedural', beforeId: null }),
       this.memories.search(namespace, { query, kind: null, beforeId: null }),
     ]);
-    const memory: MemoryContext = { namespace, profile, rules, relevant, summary: thread.summary, summaryCursor: thread.summaryCursor };
+    const seen = new Set(profile ? [profile.id] : []);
+    const unique = (page: MemoryPage): MemoryPage => ({ ...page, memories: page.memories.filter((entry) => {
+      if (seen.has(entry.id)) return false;
+      seen.add(entry.id);
+      return true;
+    }) });
+    const memory: MemoryContext = { namespace, profile, rules: unique(rules), relevant: unique(relevant),
+      summary: thread.summary, summaryCursor: thread.summaryCursor };
     return { threadId: thread.id, memory, history: messages.map((row) => ({
-      role: row.role, content: row.role === 'user' && row.author ? `${row.author}: ${row.content}` : row.content,
+      role: row.role, content: JSON.stringify({ message_id: row.messageId, reply_to_message_id: row.replyToMessageId,
+        sent_at: DateTime.fromSQL(row.createdAt, { zone: 'utc' }).toISO() ?? row.createdAt,
+        author: row.author, text: row.content }),
     })) };
   }
 }

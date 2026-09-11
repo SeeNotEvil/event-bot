@@ -6,7 +6,7 @@ import type { ConversationMessage } from '../../types/domain.js';
 import type { ArchivedMessage, MessageMetadata, SummaryBatch, ThreadMemory } from './ThreadMemory.js';
 
 const messageSchema = z.object({ role: z.enum(['user', 'assistant']), content: z.string().min(1).max(65_535) });
-export const SUMMARY_BATCH_SIZE = 50;
+export const SUMMARY_BATCH_SIZE = 10;
 export const summarySchema = z.string().trim().min(1).max(4_000);
 
 function mapMessage(row: {

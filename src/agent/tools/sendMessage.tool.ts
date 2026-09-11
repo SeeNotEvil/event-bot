@@ -1,35 +1,53 @@
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import type { Database } from '../../db/types.js';
-import type { TelegramGateway, TelegramTextOptions } from '../../telegram/TelegramAdapter.js';
+import type { TelegramGateway, TelegramMembershipGateway, TelegramTextOptions } from '../../telegram/TelegramAdapter.js';
 import { StaleAgentTask } from '../../application/StaleAgentTask.js';
+import { ChatMentionError, checkChatMember } from '../../application/chats/chatMembers.js';
 import { defineTool } from './Tool.js';
 
 export const sendMessageInputSchema = z.object({
   text: z.string().min(1).max(4096),
   mentionText: z.string().min(1).max(255).nullable(),
+  mentionTelegramUserId: z.number().int().positive().safe().nullable(),
 });
 
-export function createSendMessageTool(database: Kysely<Database>, telegram: TelegramGateway) {
+export function createSendMessageTool(database: Kysely<Database>, telegram: TelegramGateway & TelegramMembershipGateway) {
   return defineTool({
     name: 'send_message',
-    description: 'Отправляет твой полный готовый текст без дополнений: ответ, напоминание, вопрос, подтверждение или объяснение ошибки. Для группового фонового напоминания/вопроса включи обращение к указанному получателю напоминаний и передай mentionText — точный, единственный фрагмент text, который нужно сделать упоминанием этого человека. Иначе mentionText=null. Кнопки Да/Нет для вопроса готовности добавляются автоматически по контексту задания. Это terminal tool: сначала выполни все действия запроса; в readiness_response сначала вызови record_readiness, при Нет попроси прислать новый срок через Reply.',
+    description: 'Отправляет твой полный готовый текст без дополнений. Для упоминания человека по просьбе в группе сначала search_chat_members, затем передай его mentionTelegramUserId и mentionText — точный, единственный фрагмент text, который станет кликабельным именем. Username не обязателен. Для фонового напоминания получатель уже задан сервером: mentionTelegramUserId=null, mentionText — обращение к нему. Без упоминания оба поля null. Кнопки Да/Нет добавляются по контексту. Это terminal tool: сначала выполни все действия; в readiness_response сначала record_readiness, при Нет попроси новый срок через Reply.',
     input: sendMessageInputSchema,
     output: z.object({ success: z.literal(true), transcript: z.string() }),
     terminal: true,
     execute: async (context, input) => {
       await context.beforeStep?.();
       const options: TelegramTextOptions = {};
-      if (context.mentionRecipient) {
+      let recipient = context.mentionRecipient;
+      if (input.mentionTelegramUserId !== null) {
+        if (context.chatType !== 'group') throw new ChatMentionError('Упоминание участника доступно только в группе. Для обычного ответа передай оба поля упоминания null.');
+        if (recipient && recipient.id !== input.mentionTelegramUserId) {
+          throw new ChatMentionError('Получатель фонового напоминания уже задан. Используй mentionTelegramUserId=null и обращение к mention_recipient.');
+        }
+        if (!recipient) {
+          const candidate = context.resolvedChatMembers?.find((member) => member.telegramUserId === input.mentionTelegramUserId);
+          if (!candidate) throw new ChatMentionError('Сначала найди этого участника через search_chat_members в текущем запуске. Не угадывай Telegram ID.');
+          const checked = await checkChatMember(telegram, context.telegramChatId, candidate.telegramUserId);
+          if (!checked.success) throw new ChatMentionError(checked.reason === 'MEMBERSHIP_UNVERIFIED'
+            ? 'Telegram не позволил проверить участника. Упоминание не отправлено; сообщи об этом без тега.'
+            : 'Этот человек больше не является допустимым участником чата. Упоминание не отправлено; сообщи об этом без тега.');
+          recipient = { id: checked.member.telegramUserId, firstName: checked.member.firstName };
+        }
+      }
+      if (recipient) {
         const span = input.mentionText;
         const offset = span === null ? -1 : input.text.indexOf(span);
         if (span === null || offset < 0 || input.text.indexOf(span, offset + span.length) !== -1) {
-          throw new Error('Include one unambiguous mentionText in your text to address the reminder recipient');
+          throw new ChatMentionError('mentionText должен точно совпадать с единственным фрагментом text, который станет упоминанием.');
         }
         options.entities = [{ type: 'text_mention', offset, length: span.length,
-          user: { id: context.mentionRecipient.id, is_bot: false, first_name: context.mentionRecipient.firstName } }];
+          user: { id: recipient.id, is_bot: false, first_name: recipient.firstName } }];
       } else if (input.mentionText !== null) {
-        throw new Error('No mention recipient is bound to this run; use mentionText=null');
+        throw new ChatMentionError('Для упоминания найди участника через search_chat_members и передай mentionTelegramUserId; без упоминания оба поля должны быть null.');
       }
       const trigger = context.trigger;
       if (trigger?.kind === 'notification') {

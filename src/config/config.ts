@@ -36,7 +36,7 @@ const environmentSchema = z
       .default('Europe/Moscow')
       .refine((value) => DateTime.now().setZone(value).isValid, 'Must be a valid IANA timezone'),
     MAX_AGENT_STEPS: z.coerce.number().int().min(1).max(50).default(10),
-    CONVERSATION_HISTORY_LIMIT: z.coerce.number().int().min(2).max(100).default(50),
+    CONVERSATION_HISTORY_LIMIT: z.coerce.number().int().min(2).max(100).default(15),
 
     NOTIFICATION_POLL_INTERVAL_MS: z.coerce
       .number()

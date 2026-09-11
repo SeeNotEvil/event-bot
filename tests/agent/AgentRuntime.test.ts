@@ -134,9 +134,9 @@ describe('AgentRuntime', () => {
     const registry = new ToolRegistry().register(createSkipReplyTool());
     const toolRuntime = new ToolRuntime(registry, silentLogger);
     const groupContext: AgentContext = { ...context, chatType: 'group',
-      groupMessage: { directlyAddressed: false, replyTo: null } };
+      groupMessage: { directlyAddressed: false } };
     for (const deniedContext of [context,
-      { ...groupContext, groupMessage: { directlyAddressed: true, replyTo: null } },
+      { ...groupContext, groupMessage: { directlyAddressed: true } },
       { ...groupContext, trigger: { kind: 'notification' as const, notificationId: 1, eventId: 2,
         deadlineVersion: 1, notificationKind: 'reminder' as const, answer: null } },
     ]) {

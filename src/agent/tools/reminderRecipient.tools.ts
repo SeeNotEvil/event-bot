@@ -8,10 +8,15 @@ import { defineTool } from './Tool.js';
 
 export function createSearchChatMembersTool(database: Kysely<Database>, telegram: TelegramMembershipGateway) {
   return defineTool({
-    name: 'search_chat_members', description: 'Ищет получателя среди известных участников ТЕКУЩЕГО чата по имени или @username (query=null — до 10 кандидатов). В группе проверяет актуальное членство через Telegram. Учитывает участников переписки, задач, Reply и именные упоминания текущего сообщения; это не полный список группы. При нескольких совпадениях уточни. Если человек неизвестен, попроси его написать в группу или пользователя ответить на его сообщение через Reply. verificationFailed означает, что Telegram не позволил подтвердить членство: не назначай по догадке.',
+    name: 'search_chat_members', description: 'Ищет человека для упоминания в send_message или назначения получателем напоминаний среди известных участников ТЕКУЩЕГО чата по имени или @username (query=null — до 10 кандидатов). В группе проверяет актуальное членство через Telegram. Учитывает участников переписки, задач, Reply и именные упоминания текущего сообщения; это не полный список группы. При нескольких совпадениях уточни. Если человек неизвестен, попроси его написать в группу или пользователя ответить на его сообщение через Reply. verificationFailed означает, что Telegram не позволил подтвердить членство: не выбирай по догадке.',
     input: z.object({ query: z.string().trim().min(1).max(255).nullable() }),
     output: z.object({ members: z.array(chatMemberSchema), knownMembersOnly: z.literal(true), hasMore: z.boolean(), verificationFailed: z.boolean() }),
-    execute: (context, input) => searchChatMembers(database, telegram, context, input.query),
+    execute: async (context, input) => {
+      const result = await searchChatMembers(database, telegram, context, input.query);
+      context.resolvedChatMembers = [...new Map([...(context.resolvedChatMembers ?? []), ...result.members]
+        .map((member) => [member.telegramUserId, member])).values()];
+      return result;
+    },
   });
 }
 

@@ -15,7 +15,7 @@ describe('loadConfig', () => {
     expect(config.openai.maxOutputTokens).toBe(16_384);
     expect(config.defaultTimezone).toBe('Europe/Moscow');
     expect(config.maxAgentSteps).toBe(10);
-    expect(config.conversationHistoryLimit).toBe(50);
+    expect(config.conversationHistoryLimit).toBe(15);
     expect(config.notificationWorker).toEqual({
       pollIntervalMs: 5_000,
       batchSize: 20,

@@ -24,7 +24,7 @@ export class BotBrain {
   }
 
   public async handleMessage(message: string, user: User, chat: Chat, telegramChatId: number,
-    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[]; groupMessage?: AgentContext['groupMessage'] } = {},
+    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[]; groupMessage?: AgentContext['groupMessage']; replyTo?: AgentContext['replyTo'] } = {},
   ): Promise<AgentRunResult> {
     // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
     const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
@@ -45,6 +45,7 @@ export class BotBrain {
       userPreferences: chat.type === 'personal' ? memory.profile?.content ?? null : null, timezone: chat.timezone, now, trigger,
       recipientReferences: metadata.recipientReferences ?? [],
       groupMessage: metadata.groupMessage,
+      replyTo: metadata.replyTo,
     };
     return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }

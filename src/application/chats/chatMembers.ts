@@ -35,6 +35,9 @@ export class RecipientMembershipError extends Error {
   }
 }
 
+// Only intentional, actionable mention errors are exposed to the agent.
+export class ChatMentionError extends Error {}
+
 export async function requireChatMember(telegram: TelegramMembershipGateway, chatId: number, userId: number): Promise<void> {
   const result = await checkChatMember(telegram, chatId, userId);
   if (!result.success) throw new RecipientMembershipError(result.reason);

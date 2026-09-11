@@ -29,10 +29,11 @@ export type AgentContext = {
   trigger?: AgentTrigger | undefined;
   groupMessage?: {
     directlyAddressed: boolean;
-    replyTo: { author: string; text: string | null } | null;
   } | undefined;
+  replyTo?: { messageId: number; author: string; text: string | null; quote: string | null; sentAt: string } | null | undefined;
   mentionRecipient?: { id: number; firstName: string } | undefined;
   recipientReferences?: ChatMemberReference[];
+  resolvedChatMembers?: ChatMemberReference[];
   beforeStep?: () => Promise<void>;
   beforeSend?: () => Promise<void>;
   outgoingMessageId?: number;

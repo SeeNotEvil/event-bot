@@ -60,13 +60,16 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
         const reply = context.message.reply_to_message;
         const groupMessage = isPrivate ? undefined : {
           directlyAddressed: request !== null,
-          replyTo: reply ? {
-            author: reply.from?.id === context.me.id ? 'Мэй Мэй'
-              : reply.from ? [reply.from.first_name, reply.from.last_name].filter(Boolean).join(' ')
-              : reply.sender_chat?.title ?? 'Участник',
-            text: reply.text ?? reply.caption ?? null,
-          } : null,
         };
+        const replyTo = reply ? {
+          messageId: reply.message_id,
+          author: reply.from?.id === context.me.id ? 'Мэй Мэй'
+            : reply.from ? [reply.from.first_name, reply.from.last_name].filter(Boolean).join(' ')
+            : reply.sender_chat?.title ?? 'Участник',
+          text: reply.text ?? reply.caption ?? null,
+          quote: context.message.quote?.text ?? null,
+          sentAt: new Date(reply.date * 1000).toISOString(),
+        } : null;
         const referencedUsers = [
           context.message.reply_to_message?.from,
           ...(context.message.entities ?? context.message.caption_entities ?? [])
@@ -77,7 +80,7 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           lastName: person.last_name ?? null, username: person.username ?? null,
         }));
         await dependencies.brain.handleMessage(request ?? text, user, chat, chatId, context.chat.type,
-          { ...metadata, stored: true, recipientReferences, groupMessage });
+          { ...metadata, stored: true, recipientReferences, groupMessage, replyTo });
       } catch (error) {
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram message processing failed');
       }
