@@ -22,6 +22,12 @@ export interface UsersTable {
   updated_at: UpdatedTimestamp;
 }
 
+export interface BotAccessTable {
+  telegram_user_id: number;
+  added_by_telegram_user_id: number;
+  created_at: CreatedTimestamp;
+}
+
 export interface ChatsTable {
   id: Generated<number>;
   type: 'personal' | 'group';
@@ -74,6 +80,7 @@ export interface MemoriesTable {
   kind: 'semantic' | 'episodic' | 'procedural';
   content: string;
   source_message_id: number | null;
+  source_user_id: Generated<number | null>;
   source: string;
   version: Generated<number>;
   created_at: CreatedTimestamp;
@@ -84,6 +91,7 @@ export interface ThreadsTable {
   id: Generated<number>;
   chat_id: number;
   summary: Generated<string | null>;
+  summary_access_key: Generated<string | null>;
   summary_cursor: Generated<number>;
   summary_version: Generated<number>;
   lock_token: Generated<string | null>;
@@ -165,6 +173,7 @@ export interface SchedulesTable {
 }
 
 export interface Database {
+  bot_access: BotAccessTable;
   users: UsersTable;
   chats: ChatsTable;
   events: EventsTable;

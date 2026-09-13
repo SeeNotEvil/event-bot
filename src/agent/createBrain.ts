@@ -15,6 +15,8 @@ import type { AnyTool } from './tools/Tool.js';
 import { createMoodTools } from './tools/mood.tools.js';
 import { createNoteTools } from './tools/note.tools.js';
 import { createSchedulerTools } from './tools/scheduler.tools.js';
+import { BotAccess } from '../application/access/BotAccess.js';
+import { createAccessTools } from './tools/access.tools.js';
 import { createCreateEventsTool } from './tools/createEvents.tool.js';
 import { createSearchEventsTool } from './tools/searchEvents.tool.js';
 import { createSearchScheduleTool } from './tools/searchSchedule.tool.js';
@@ -33,13 +35,14 @@ import { createReadEventTool, createReadTaskListTool, createReadChatMessagesTool
   createConfigureNotificationsTool, createRecordReadinessTool } from './tools/workflow.tools.js';
 
 export function createBrain(database: Kysely<Database>, telegram: TelegramGateway & TelegramMembershipGateway, client: ResponsesClient, config: AppConfig, logger: Logger, clock?: Clock) {
-  const threads = new MysqlThreadMemory(database);
-  const memories = new MysqlMemoryStore(database);
+  const access = new BotAccess(database, config.telegram.ownerId);
+  const threads = new MysqlThreadMemory(database, access);
+  const memories = new MysqlMemoryStore(database, access);
   const memoryBuilder = new MemoryContextBuilder(threads, memories, config.conversationHistoryLimit);
   const registry = new ToolRegistry()
     .register(createCreateEventsTool(database)).register(createSearchEventsTool(database))
     .register(createSearchScheduleTool(database)).register(createReadEventTool(database))
-    .register(createSearchChatMembersTool(database, telegram)).register(createSetReminderRecipientTool(database, telegram))
+    .register(createSearchChatMembersTool(database, telegram, access)).register(createSetReminderRecipientTool(database, telegram, access))
     .register(createReadTaskListTool(database)).register(createReadChatMessagesTool(threads))
     .register(createSearchMemoryTool(memories)).register(createSaveMemoryTool(memories)).register(createForgetMemoryTool(memories))
     .register(createCompleteEventTool(database)).register(createRescheduleEventTool(database))
@@ -47,9 +50,9 @@ export function createBrain(database: Kysely<Database>, telegram: TelegramGatewa
     .register(createCreateNotificationTool(database)).register(createSearchNotificationsTool(database))
     .register(createDeleteNotificationTool(database)).register(createConfigureNotificationsTool(database))
     .register(createRecordReadinessTool(database)).register(createSaveUserPreferencesTool(database))
-    .register(createSendMessageTool(database, telegram)).register(createSkipReplyTool());
-  for (const tool of [...createMoodTools(database), ...createNoteTools(database), ...createSchedulerTools(database)]) registry.register(tool as AnyTool);
-  const runtime = new AgentRuntime(client, registry, new ToolRuntime(registry, logger),
+    .register(createSendMessageTool(database, telegram, access)).register(createSkipReplyTool());
+  for (const tool of [...createMoodTools(database), ...createNoteTools(database), ...createSchedulerTools(database), ...createAccessTools(access)]) registry.register(tool as AnyTool);
+  const runtime = new AgentRuntime(client, registry, new ToolRuntime(registry, logger, access),
     config.openai.model, config.openai.maxOutputTokens, config.maxAgentSteps, logger);
-  return new BotBrain(database, runtime, threads, memoryBuilder, logger, clock);
+  return new BotBrain(database, runtime, threads, memoryBuilder, logger, access, clock);
 }

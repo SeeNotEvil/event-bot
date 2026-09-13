@@ -15,7 +15,7 @@ export function canWriteMemory(context: AgentContext) {
 }
 
 export function memorySource(context: AgentContext) {
-  return { messageId: context.sourceMessageId ?? null,
+  return { messageId: context.sourceMessageId ?? null, userId: context.userId,
     label: context.sourceMessageId === undefined ? 'scheduled_task' : 'addressed_message' };
 }
 

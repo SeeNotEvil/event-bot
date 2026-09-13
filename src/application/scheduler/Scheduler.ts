@@ -7,6 +7,7 @@ import { enqueueOnce } from './enqueue.js';
 import { agentTaskPayloadSchema, createScheduleSchema, decodeJson, deleteScheduleSchema,
   recurrenceSchema, scheduleOnceSchema, searchSchedulesSchema, updateScheduleSchema, type Recurrence } from './schemas.js';
 import { occurrence } from './time.js';
+import type { BotAccess } from '../access/BotAccess.js';
 
 export type ScheduleOwner = { userId: number; chatId: number; timezone: string };
 
@@ -35,7 +36,7 @@ async function mapSchedule(database: Kysely<Database>, row: Selectable<Schedules
 
 export class Scheduler {
   public static enqueueOnce = enqueueOnce;
-  public constructor(private readonly database: Kysely<Database>) {}
+  public constructor(private readonly database: Kysely<Database>, private readonly access?: BotAccess) {}
 
   public async once(owner: ScheduleOwner, now: Date, rawInput: z.infer<typeof scheduleOnceSchema>) {
     const input = scheduleOnceSchema.parse(rawInput);
@@ -133,6 +134,7 @@ export class Scheduler {
               .whereRef('schedule_version', '=', 'schedules.version').where('status', '=', 'pending').where('remind_at_utc', '>', nowSql),
           ))])).orderBy('next_run_at_utc').orderBy('id').limit(1);
         if (processed.length) candidates = candidates.where('schedules.id', 'not in', processed);
+        if (this.access) candidates = candidates.where(this.access.allowsUser(sql.ref('schedules.created_by_user_id')));
         // Read a candidate, lock its event first, then recheck under the schedule lock.
         const candidate = await candidates.executeTakeFirst();
         if (!candidate) return null;

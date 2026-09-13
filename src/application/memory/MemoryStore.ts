@@ -15,7 +15,7 @@ export const memoryWriteSchema = z.object({
   content: z.string().trim().min(1).max(4_000), expectedVersion: z.number().int().positive().nullable(),
 });
 export type MemoryWrite = z.infer<typeof memoryWriteSchema>;
-export type MemorySource = { messageId: number | null; label: string };
+export type MemorySource = { messageId: number | null; label: string; userId?: number | null };
 export const memoryResultSchema = z.object({
   success: z.boolean(), reason: z.enum(['VERSION_CONFLICT', 'NOT_FOUND']).nullable(), memory: memorySchema.nullable(),
 });

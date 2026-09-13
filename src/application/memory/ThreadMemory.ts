@@ -21,7 +21,7 @@ export type ThreadSnapshot = {
   summaryVersion: number;
 };
 
-export type SummaryBatch = ThreadSnapshot & { token: string; messages: ArchivedMessage[] };
+export type SummaryBatch = ThreadSnapshot & { token: string; messages: ArchivedMessage[]; accessKey?: string | undefined };
 
 export interface ThreadMemory {
   ensure(chatId: number): Promise<ThreadSnapshot>;

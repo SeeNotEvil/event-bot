@@ -40,6 +40,11 @@ import { loadConfig } from '../../src/config/config.js';
 import { silentLogger } from '../helpers.js';
 import { DateTime } from 'luxon';
 import type { Response } from 'openai/resources/responses/responses';
+import { AccessDeniedError, BotAccess } from '../../src/application/access/BotAccess.js';
+import { createAccessTools } from '../../src/agent/tools/access.tools.js';
+import { ToolRegistry } from '../../src/agent/tools/ToolRegistry.js';
+import { ToolRuntime } from '../../src/agent/tools/ToolRuntime.js';
+import type { AnyTool } from '../../src/agent/tools/Tool.js';
 
 const describeWithMysql = process.env.RUN_MYSQL_TESTS === '1' ? describe : describe.skip;
 
@@ -59,6 +64,111 @@ describeWithMysql('MySQL application actions', () => {
 
   afterAll(async () => {
     await database.destroy();
+  });
+
+  it('persists owner-controlled access before registration and cancels revoked jobs without retries', async () => {
+    const ownerId = Date.now() + 800_000;
+    const memberId = ownerId + 1;
+    const access = new BotAccess(database, ownerId);
+    const registry = new ToolRegistry();
+    for (const tool of createAccessTools(access)) registry.register(tool as AnyTool);
+    const runtime = new ToolRuntime(registry, silentLogger, access);
+    const ownerContext = { userId: 1, telegramUserId: ownerId, sourceMessageId: 1 } as AgentContext;
+    try {
+      expect(await access.isAllowed(ownerId)).toBe(true);
+      expect(await access.isAllowed(memberId)).toBe(false);
+      const granted = await runtime.execute('allow_user', { telegramUserId: memberId }, ownerContext);
+      expect(granted).toMatchObject({ ok: true, output: { success: true, changed: true } });
+      expect(await database.selectFrom('users').select('id').where('telegram_user_id', '=', memberId).executeTakeFirst()).toBeUndefined();
+      expect(await access.isAllowed(memberId)).toBe(true);
+      expect(await runtime.execute('allow_user', { telegramUserId: memberId }, ownerContext))
+        .toMatchObject({ ok: true, output: { success: true, changed: false } });
+      expect(await runtime.execute('list_allowed_users', { afterId: memberId - 1 }, ownerContext))
+        .toMatchObject({ ok: true, output: { ownerTelegramUserId: ownerId,
+          users: [{ telegramUserId: memberId, addedByTelegramUserId: ownerId, firstName: null }] } });
+      expect(await runtime.execute('deny_user', { telegramUserId: ownerId }, ownerContext))
+        .toMatchObject({ ok: true, output: { success: false, reason: 'OWNER_PROTECTED' } });
+      for (const tool of ['allow_user', 'deny_user', 'list_allowed_users']) {
+        expect(await runtime.execute(tool, { telegramUserId: ownerId, afterId: null }, { ...ownerContext, telegramUserId: memberId }))
+          .toMatchObject({ ok: false, output: { error: { code: 'ACCESS_DENIED' } } });
+      }
+      await expect(access.allow(memberId, memberId + 1)).rejects.toBeInstanceOf(AccessDeniedError);
+
+      const user = await ensureUser(database, { telegramUserId: memberId, telegramChatId: memberId,
+        telegramUsername: null, firstName: 'Access member', lastName: null, defaultTimezone: 'Europe/Moscow' });
+      const chat = await ensureChat(database, { type: 'personal', userId: user.id, timezone: user.timezone });
+      const scheduler = new Scheduler(database);
+      const owner = { userId: user.id, chatId: chat.id, timezone: chat.timezone };
+      const now = new Date('2035-01-01T00:00:00Z');
+      const once = { instruction: 'Напомни', eventId: null, remindAt: '2035-01-01T10:00' };
+      const job = await scheduler.once(owner, now, once);
+      const schedule = await scheduler.create(owner, now, { instruction: 'Обзор', eventId: null,
+        recurrence: { frequency: 'daily', time: '10:00', weekdays: null } });
+      expect(await runtime.execute('deny_user', { telegramUserId: memberId }, ownerContext))
+        .toMatchObject({ ok: true, output: { success: true, changed: true } });
+      expect(await access.isAllowed(memberId)).toBe(false);
+      expect(await database.selectFrom('notifications').select('status').where('id', '=', job.notificationId).executeTakeFirstOrThrow())
+        .toEqual({ status: 'cancelled' });
+      expect(await database.selectFrom('schedules').select('enabled').where('id', '=', schedule.id).executeTakeFirstOrThrow())
+        .toEqual({ enabled: 0 });
+
+      // A legacy pending job for a blocked user must terminate, not retry forever.
+      const legacy = await scheduler.once(owner, now, once);
+      const result = await processDueNotifications(database, { now: new Date('2035-01-02T00:00:00Z'), batchSize: 10,
+        lockTimeoutMs: 60_000, notificationIds: [legacy.notificationId],
+        run: async (notification) => access.requireAllowed(notification.createdByTelegramId) });
+      expect(result).toMatchObject({ claimed: 1, skipped: 1, sent: 0, failed: 0 });
+      expect(await database.selectFrom('notifications').select(['status', 'retry_at']).where('id', '=', legacy.notificationId).executeTakeFirstOrThrow())
+        .toEqual({ status: 'cancelled', retry_at: null });
+    } finally {
+      await database.deleteFrom('bot_access').where('telegram_user_id', '=', memberId).execute();
+      await database.deleteFrom('users').where('telegram_user_id', '=', memberId).execute();
+    }
+  });
+
+  it('filters legacy history and memories by author and invalidates summaries on revocation', async () => {
+    const ownerId = Date.now() + 900_000;
+    const access = new BotAccess(database, ownerId);
+    const users = [];
+    for (let index = 0; index < 3; index++) users.push(await ensureUser(database, { telegramUserId: ownerId + index,
+      telegramChatId: ownerId + index, telegramUsername: null, firstName: `Access ${index}`, lastName: null, defaultTimezone: 'Europe/Moscow' }));
+    const [owner, member, stranger] = users;
+    const chat = await ensureChat(database, { type: 'group', telegramChatId: -ownerId, title: 'Access history', timezone: 'Europe/Moscow' });
+    const rawThreads = new MysqlThreadMemory(database);
+    const thread = await rawThreads.ensure(chat.id);
+    try {
+      await access.allow(ownerId, member!.telegramUserId);
+      for (let index = 0; index < 22; index++) await rawThreads.append(thread.id, index % 2 ? owner!.id : member!.id,
+        { role: 'user', content: `allowed-${index}` });
+      await rawThreads.append(thread.id, stranger!.id, { role: 'user', content: 'Stranger text' });
+      const rawMemories = new MysqlMemoryStore(database);
+      for (const user of users) await rawMemories.save({ kind: 'chat', id: chat.id },
+        { key: `source-${user.id}`, kind: 'semantic', content: `Memory ${user.id}`, expectedVersion: null },
+        { messageId: null, label: 'scheduled_task', userId: user.id });
+      const threads = new MysqlThreadMemory(database, access);
+      const memories = new MysqlMemoryStore(database, access);
+      expect(await threads.read(thread.id, 100)).toHaveLength(22);
+      expect((await memories.search({ kind: 'chat', id: chat.id }, { query: null, kind: null, beforeId: null })).memories).toHaveLength(2);
+      await expect(threads.append(thread.id, stranger!.id, { role: 'user', content: 'Blocked write' })).rejects.toBeInstanceOf(AccessDeniedError);
+      const first = (await threads.claimSummary(2, 60_000))!;
+      expect(first.id).toBe(thread.id);
+      expect(first.messages.every((message) => message.content.startsWith('allowed-'))).toBe(true);
+      expect(await threads.completeSummary(first, 'Сводка разрешённых участников')).toBe(true);
+      const pending = (await threads.claimSummary(2, 60_000))!;
+      expect(pending.summary).toBe('Сводка разрешённых участников');
+      await access.deny(ownerId, member!.telegramUserId);
+      expect(await threads.completeSummary(pending, 'Опоздавшая сводка')).toBe(false);
+      expect(await threads.ensure(chat.id)).toMatchObject({ summary: null, summaryCursor: 0 });
+      expect(await threads.read(thread.id, 100)).toHaveLength(11);
+      const visible = await memories.search({ kind: 'chat', id: chat.id }, { query: null, kind: null, beforeId: null });
+      expect(visible.memories.map((memory) => memory.key)).toEqual([`source-${owner!.id}`]);
+      expect(await memories.get({ kind: 'chat', id: chat.id }, `source-${member!.id}`)).toBeNull();
+      expect(await rawThreads.read(thread.id, 100)).toHaveLength(23); // archive is retained, filtered on reads
+    } finally {
+      await database.deleteFrom('bot_access').where('telegram_user_id', '=', member!.telegramUserId).execute();
+      await database.deleteFrom('chats').where('id', '=', chat.id).execute();
+      await database.deleteFrom('users').where('id', 'in', users.map((user) => user.id)).execute();
+    }
   });
 
   it('isolates notes by chat, searches full documents and protects shared edits and deletion with versions', async () => {
@@ -265,7 +375,7 @@ describeWithMysql('MySQL application actions', () => {
       const sendText = vi.fn(async () => 123);
       const telegram = { sendText, editText: vi.fn(async () => undefined), clearButtons: vi.fn(async () => undefined),
         getChatMember: vi.fn(async () => ({ status: 'member' as const, user: { id: unique, is_bot: false, first_name: 'Owner' } })) };
-      const config = loadConfig({ NODE_ENV: 'test', TELEGRAM_BOT_TOKEN: '123:token', OPENAI_API_KEY: 'test', MYSQL_PASSWORD: 'test' });
+      const config = loadConfig({ NODE_ENV: 'test', TELEGRAM_OWNER_ID: String(user.telegramUserId), TELEGRAM_BOT_TOKEN: '123:token', OPENAI_API_KEY: 'test', MYSQL_PASSWORD: 'test' });
       const brain = createBrain(database, telegram, client, config, silentLogger, () => DateTime.fromJSDate(now));
       const result = await processDueNotifications(database, { now, batchSize: 10, lockTimeoutMs: 60_000,
         notificationIds: [once.notificationId], run: async (job, guard) => {

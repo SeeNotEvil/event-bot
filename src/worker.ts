@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Api } from 'grammy';
 import OpenAI from 'openai';
 import { createBrain } from './agent/createBrain.js';
+import { BotAccess } from './application/access/BotAccess.js';
 import { requireChatMember } from './application/chats/chatMembers.js';
 import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
 import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
@@ -47,10 +48,11 @@ export async function runNotificationWorker(): Promise<void> {
     maxRetries: 0,
   });
   const brain = createBrain(database, telegram, openai.responses, config, logger);
-  const scheduler = new Scheduler(database);
+  const access = new BotAccess(database, config.telegram.ownerId);
+  const scheduler = new Scheduler(database, access);
   const summaryTimeoutMs = Math.min(config.openai.timeoutMs, 20_000);
   const summaryClient = new OpenAI({ apiKey: config.openai.apiKey, timeout: summaryTimeoutMs, maxRetries: 0 });
-  const summaries = new SummaryUpdater(new MysqlThreadMemory(database), summaryClient.responses,
+  const summaries = new SummaryUpdater(new MysqlThreadMemory(database, access), summaryClient.responses,
     config.openai.model, config.conversationHistoryLimit, Math.max(config.notificationWorker.lockTimeoutMs, summaryTimeoutMs + 5_000),
     config.openai.maxOutputTokens, logger);
   const abortController = new AbortController();
@@ -97,6 +99,8 @@ export async function runNotificationWorker(): Promise<void> {
           signal: abortController.signal,
           run: async (notification, guard) => {
             const checkRecipient = async () => {
+              await access.requireAllowed(notification.createdByTelegramId);
+              await access.requireAllowed(notification.reminderRecipientTelegramId);
               if (notification.chatType === 'group') {
                 await requireChatMember(telegram, notification.telegramChatId, notification.reminderRecipientTelegramId);
               }
@@ -112,7 +116,12 @@ export async function runNotificationWorker(): Promise<void> {
               notificationKind: notification.kind, answer: notification.answer,
             };
             const result = await brain.handleBackground(notification.chatId, trigger, {
-              beforeStep: async () => { await guard(); if (notification.kind === 'agent_task') await checkRecipient(); },
+              beforeStep: async () => {
+                await guard();
+                await access.requireAllowed(notification.createdByTelegramId);
+                await access.requireAllowed(notification.reminderRecipientTelegramId);
+                if (notification.kind === 'agent_task') await checkRecipient();
+              },
               beforeSend: checkRecipient,
               mentionRecipient: notification.chatType === 'group'
                 ? { id: notification.reminderRecipientTelegramId, firstName: notification.reminderRecipientName } : undefined,

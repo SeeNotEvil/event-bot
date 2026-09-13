@@ -5,6 +5,7 @@ import type { TelegramGateway, TelegramMembershipGateway, TelegramTextOptions } 
 import { StaleAgentTask } from '../../application/StaleAgentTask.js';
 import { ChatMentionError, checkChatMember } from '../../application/chats/chatMembers.js';
 import { defineTool } from './Tool.js';
+import { AccessDeniedError, type AccessPolicy } from '../../application/access/BotAccess.js';
 
 export const sendMessageInputSchema = z.object({
   text: z.string().min(1).max(4096),
@@ -12,7 +13,7 @@ export const sendMessageInputSchema = z.object({
   mentionTelegramUserId: z.number().int().positive().safe().nullable(),
 });
 
-export function createSendMessageTool(database: Kysely<Database>, telegram: TelegramGateway & TelegramMembershipGateway) {
+export function createSendMessageTool(database: Kysely<Database>, telegram: TelegramGateway & TelegramMembershipGateway, access?: AccessPolicy) {
   return defineTool({
     name: 'send_message',
     description: 'Отправляет твой полный готовый текст без дополнений. Для упоминания человека по просьбе в группе сначала search_chat_members, затем передай его mentionTelegramUserId и mentionText — точный, единственный фрагмент text, который станет кликабельным именем. Username не обязателен. Для фонового напоминания получатель уже задан сервером: mentionTelegramUserId=null, mentionText — обращение к нему. Без упоминания оба поля null. Кнопки Да/Нет добавляются по контексту. Это terminal tool: сначала выполни все действия; в readiness_response сначала record_readiness, при Нет попроси новый срок через Reply.',
@@ -64,6 +65,8 @@ export function createSendMessageTool(database: Kysely<Database>, telegram: Tele
       }
       await context.beforeSend?.();
       await context.beforeStep?.();
+      if (access && (!await access.isAllowed(context.telegramUserId)
+        || (recipient && !await access.isAllowed(recipient.id)))) throw new AccessDeniedError();
       const messageId = await telegram.sendText(context.telegramChatId, input.text, options);
       context.outgoingMessageId = messageId;
       if (trigger?.kind === 'notification' || trigger?.kind === 'agent_task') {

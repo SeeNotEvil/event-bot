@@ -22,7 +22,8 @@ import type { Database } from '../../src/db/types.js';
 import type { AgentContext } from '../../src/types/domain.js';
 import * as chatMembers from '../../src/application/chats/chatMembers.js';
 import { checkChatMember, requireChatMember, RecipientMembershipError } from '../../src/application/chats/chatMembers.js';
-import { silentLogger } from '../helpers.js';
+import { silentLogger, testAccess } from '../helpers.js';
+import type { AccessPolicy } from '../../src/application/access/BotAccess.js';
 
 const context: AgentContext = {
   userId: 14,
@@ -42,6 +43,51 @@ const context: AgentContext = {
 };
 
 describe('ToolRegistry and ToolRuntime', () => {
+  it('denies strangers every tool, restricts administration to a live owner and rechecks revocation', async () => {
+    const allowed = new Set([123, 456]);
+    const access: AccessPolicy = { isOwner: (id) => id === 123, isAllowed: async (id) => id !== null && allowed.has(id) };
+    const execute = vi.fn(async () => ({ success: true }));
+    const administer = vi.fn(async () => ({ success: true }));
+    const sendText = vi.fn(async () => 42);
+    const registry = new ToolRegistry().register(defineTool({ name: 'read_data', description: 'Read data',
+      input: z.object({}), output: z.object({ success: z.boolean() }), execute }))
+      .register(defineTool({ name: 'manage_access', description: 'Manage access', access: 'owner',
+        input: z.object({}), output: z.object({ success: z.boolean() }), execute: administer }))
+      .register(createSendMessageTool({} as Kysely<Database>,
+        { sendText, editText: vi.fn(), clearButtons: vi.fn(), getChatMember: vi.fn() }, access));
+    const runtime = new ToolRuntime(registry, silentLogger, access);
+    const denied = { ok: false, terminal: false, output: { error: { code: 'ACCESS_DENIED', retryable: false } } };
+    for (const telegramUserId of [null, 789]) {
+      for (const name of ['read_data', 'manage_access', 'send_message', 'unknown_tool']) {
+        // An owner ID supplied in arguments cannot replace the server-bound author.
+        expect(await runtime.execute(name, { telegramUserId: 123 }, { ...context, telegramUserId })).toMatchObject(denied);
+      }
+    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(administer).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+
+    const member = { ...context, telegramUserId: 456, sourceMessageId: 99 };
+    expect(await runtime.execute('read_data', {}, member)).toMatchObject({ ok: true });
+    expect(await runtime.execute('manage_access', {}, member)).toMatchObject(denied);
+    expect(await runtime.execute('manage_access', {}, { ...context, sourceMessageId: 99 })).toMatchObject({ ok: true });
+    expect(await runtime.execute('manage_access', {}, context)).toMatchObject(denied);
+    expect(await runtime.execute('manage_access', {}, { ...context, sourceMessageId: 99,
+      trigger: { kind: 'agent_task', notificationId: 1, instruction: 'grant access', scheduledFor: context.now,
+        timezone: context.timezone, scheduleId: null, eventId: null } })).toMatchObject(denied);
+    expect(administer).toHaveBeenCalledOnce();
+
+    allowed.delete(456);
+    expect(await runtime.execute('read_data', {}, member)).toMatchObject(denied);
+    expect(await runtime.execute('send_message', { text: 'Reply', mentionText: null, mentionTelegramUserId: null }, member)).toMatchObject(denied);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(sendText).not.toHaveBeenCalled();
+
+    access.isAllowed = async () => { throw new Error('Database unavailable'); };
+    expect(await runtime.execute('read_data', {}, context)).toMatchObject(denied);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it('publishes strict JSON schema with required nullable fields', () => {
     const registry = new ToolRegistry().register(
       defineTool({
@@ -75,7 +121,7 @@ describe('ToolRegistry and ToolRuntime', () => {
         execute,
       }),
     );
-    const runtime = new ToolRuntime(registry, silentLogger);
+    const runtime = new ToolRuntime(registry, silentLogger, testAccess);
 
     const success = await runtime.execute('sample', { value: 'yes' }, context);
     expect(success).toMatchObject({ ok: true, output: { accepted: true } });
@@ -201,7 +247,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     const transaction = vi.fn();
     const database = { transaction } as unknown as Kysely<Database>;
     const registry = new ToolRegistry().register(createDeleteEventTool(database));
-    const runtime = new ToolRuntime(registry, silentLogger);
+    const runtime = new ToolRuntime(registry, silentLogger, testAccess);
     await expect(runtime.execute('delete_event', { eventId: 42 }, { ...context, userId: null }))
       .resolves.toMatchObject({ ok: false, output: { error: { code: 'INVALID_CONTEXT', retryable: false } } });
     expect(transaction).not.toHaveBeenCalled();
@@ -212,7 +258,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     const editText = vi.fn();
     const telegram = { sendText, editText, clearButtons: vi.fn(), getChatMember: vi.fn() };
     const registry = new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram));
-    const runtime = new ToolRuntime(registry, silentLogger);
+    const runtime = new ToolRuntime(registry, silentLogger, testAccess);
     const text = 'Активные задачи: сходить в Озон — 7 сентября; приготовить ужин — 8 сентября.';
     const requestContext = { ...context, chatType: 'group' as const, telegramChatId: -123 };
     await expect(runtime.execute('send_message', { text, mentionText: null, mentionTelegramUserId: null }, requestContext))
@@ -239,7 +285,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     const database = {} as Kysely<Database>;
     const registry = new ToolRegistry().register(createSearchChatMembersTool(database, telegram))
       .register(createSendMessageTool(database, telegram));
-    const runtime = new ToolRuntime(registry, silentLogger);
+    const runtime = new ToolRuntime(registry, silentLogger, testAccess);
     const runContext: AgentContext = { ...context, chatType: 'group', telegramChatId: -123 };
     const input = { text: '👋 Анна, тебя зовут.', mentionText: 'Анна', mentionTelegramUserId: person.telegramUserId };
     try {
@@ -274,7 +320,7 @@ describe('ToolRegistry and ToolRuntime', () => {
     const getChatMember = vi.fn<() => Promise<ChatMember>>().mockResolvedValue({ status: 'member', user: person });
     const sendText = vi.fn(async () => 42);
     const telegram = { getChatMember, sendText, editText: vi.fn(), clearButtons: vi.fn() };
-    const runtime = new ToolRuntime(new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram)), silentLogger);
+    const runtime = new ToolRuntime(new ToolRegistry().register(createSendMessageTool({} as Kysely<Database>, telegram)), silentLogger, testAccess);
     const runContext: AgentContext = { ...context, telegramChatId: -123, chatType: 'group',
       mentionRecipient: { id: person.id, firstName: person.first_name },
       beforeSend: () => requireChatMember(telegram, -123, person.id) };

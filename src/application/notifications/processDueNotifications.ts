@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import type { Database } from '../../db/types.js';
 import { formatDateForDatabase } from './time.js';
 import { StaleAgentTask } from '../StaleAgentTask.js';
+import { AccessDeniedError } from '../access/BotAccess.js';
 import { DateTime } from 'luxon';
 import { agentTaskPayloadSchema, decodeJson } from '../scheduler/schemas.js';
 
@@ -337,7 +338,7 @@ export async function processDueNotifications(
       await guard();
       outcome = await options.run(notification, guard);
     } catch (error) {
-      if (error instanceof StaleAgentTask) {
+      if (error instanceof StaleAgentTask || error instanceof AccessDeniedError) {
         await database.updateTable('notifications').set({ status: 'cancelled', lock_token: null, locked_at: null })
           .where('id', '=', notification.notificationId).where('lock_token', '=', notification.claimToken).execute();
         result.skipped += 1;

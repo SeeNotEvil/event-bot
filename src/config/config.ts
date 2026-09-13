@@ -11,6 +11,7 @@ const environmentSchema = z
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
     TELEGRAM_BOT_TOKEN: z.string().min(1),
+    TELEGRAM_OWNER_ID: z.string().trim().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().positive().safe()),
     TELEGRAM_MODE: z.enum(['polling', 'webhook']).default('polling'),
     TELEGRAM_WEBHOOK_URL: z.preprocess(
       emptyStringToUndefined,
@@ -86,6 +87,7 @@ export type AppConfig = {
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   telegram: {
     token: string;
+    ownerId: number;
     mode: 'polling' | 'webhook';
     webhookUrl: string | null;
     webhookSecret: string | null;
@@ -122,6 +124,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel: environment.LOG_LEVEL,
     telegram: {
       token: environment.TELEGRAM_BOT_TOKEN,
+      ownerId: environment.TELEGRAM_OWNER_ID,
       mode: environment.TELEGRAM_MODE,
       webhookUrl: environment.TELEGRAM_WEBHOOK_URL ?? null,
       webhookSecret: environment.TELEGRAM_WEBHOOK_SECRET ?? null,

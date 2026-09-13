@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import OpenAI from 'openai';
 import { Bot } from 'grammy';
 import { createBrain } from './agent/createBrain.js';
+import { BotAccess } from './application/access/BotAccess.js';
 import { ensureChat } from './application/chats/ensureChat.js';
 import { ensureUser } from './application/users/ensureUser.js';
 import { loadConfig } from './config/config.js';
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
     registerTelegramHandlers(bot, {
       brain,
       database,
+      access: new BotAccess(database, config.telegram.ownerId),
       ensureUser: (input) => ensureUser(database, input),
       ensureChat: (input) => ensureChat(database, input),
       telegram,

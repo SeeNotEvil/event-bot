@@ -15,7 +15,7 @@ import { ToolRegistry } from '../../src/agent/tools/ToolRegistry.js';
 import { ToolRuntime } from '../../src/agent/tools/ToolRuntime.js';
 import { createSkipReplyTool } from '../../src/agent/tools/skipReply.tool.js';
 import type { AgentContext } from '../../src/types/domain.js';
-import { silentLogger } from '../helpers.js';
+import { silentLogger, testAccess } from '../helpers.js';
 
 const context: AgentContext = {
   userId: 14,
@@ -97,7 +97,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       10,
@@ -132,7 +132,7 @@ describe('AgentRuntime', () => {
 
   it('allows a silent terminal result only for group messages without a direct address', async () => {
     const registry = new ToolRegistry().register(createSkipReplyTool());
-    const toolRuntime = new ToolRuntime(registry, silentLogger);
+    const toolRuntime = new ToolRuntime(registry, silentLogger, testAccess);
     const groupContext: AgentContext = { ...context, chatType: 'group',
       groupMessage: { directlyAddressed: false } };
     for (const deniedContext of [context,
@@ -179,7 +179,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       3,
@@ -265,7 +265,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       4,
@@ -361,7 +361,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       3,
@@ -481,7 +481,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       5,
@@ -527,7 +527,7 @@ describe('AgentRuntime', () => {
     const runtime = new AgentRuntime(
       client,
       registry,
-      new ToolRuntime(registry, silentLogger),
+      new ToolRuntime(registry, silentLogger, testAccess),
       'gpt-5.4-mini',
       16_384,
       2,

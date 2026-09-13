@@ -1,9 +1,9 @@
-import { Bot } from 'grammy';
+import { Bot, type Transformer } from 'grammy';
 import type { Message, MessageEntity, UserFromGetMe } from 'grammy/types';
 import { describe, expect, it, vi } from 'vitest';
 import { extractGroupRequest } from '../../src/telegram/groupMessage.js';
 import { registerTelegramHandlers, type TelegramBotDependencies } from '../../src/telegram/bot.js';
-import { silentLogger } from '../helpers.js';
+import { silentLogger, testAccess } from '../helpers.js';
 
 function entity(
   text: string,
@@ -13,12 +13,64 @@ function entity(
   return { type, offset: text.indexOf(value), length: value.length };
 }
 
+const botInfo: UserFromGetMe = { id: 999, is_bot: true, first_name: 'Мэй Мэй', username: 'MeiMeiAssistantBot',
+  can_join_groups: true, can_read_all_group_messages: true, supports_inline_queries: false,
+  can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false, allows_users_to_create_topics: false,
+  can_manage_bots: false, supports_join_request_queries: false };
+
 describe('group message addressing', () => {
+  it('silently drops strangers and anonymous senders before identity, history and brain processing', async () => {
+    const bot = new Bot('123:test', { botInfo });
+    const api = vi.fn(async () => ({ ok: true as const, result: true as const }));
+    bot.api.config.use(api as Transformer);
+    const brain = { rememberMessage: vi.fn(), handleMessage: vi.fn() };
+    const ensureUser = vi.fn();
+    const ensureChat = vi.fn();
+    registerTelegramHandlers(bot, { brain, ensureUser, ensureChat, access: testAccess, logger: silentLogger } as unknown as TelegramBotDependencies);
+    const stranger = { id: 456, is_bot: false, first_name: 'Чужой' };
+    const group = { id: -123, type: 'supergroup' as const, title: 'Группа' };
+    const personal = { id: 456, type: 'private' as const, first_name: 'Чужой' };
+    for (const chat of [group, personal]) {
+      await bot.handleUpdate({ update_id: 1, message: { message_id: 10, date: 1, chat, from: stranger, text: '/allow 456' } });
+      await bot.handleUpdate({ update_id: 2, message: { message_id: 11, date: 1, chat, from: stranger, caption: 'Запомни это' } });
+      await bot.handleUpdate({ update_id: 3, callback_query: { id: 'button', from: stranger, chat_instance: 'group',
+        data: 'ready:1:1:1', message: { message_id: 10, date: 1, chat, from: botInfo, text: 'Готово?' } } });
+    }
+    await bot.handleUpdate({ update_id: 4, message: { message_id: 12, date: 1, chat: group,
+      from: { ...stranger, id: 123 }, sender_chat: group, text: 'Сообщение от имени группы' } });
+    expect(ensureUser).not.toHaveBeenCalled();
+    expect(ensureChat).not.toHaveBeenCalled();
+    expect(brain.rememberMessage).not.toHaveBeenCalled();
+    expect(brain.handleMessage).not.toHaveBeenCalled();
+    expect(api).toHaveBeenCalledTimes(2);
+    for (const call of api.mock.calls) expect(call).toEqual(expect.arrayContaining([
+      'answerCallbackQuery', { callback_query_id: 'button' },
+    ]));
+  });
+
+  it('passes only the target ID of a stranger in an owner reply, without their text or quote', async () => {
+    const bot = new Bot('123:test', { botInfo });
+    const handleMessage = vi.fn();
+    const rememberMessage = vi.fn(async () => true);
+    const user = { id: 1, telegramUserId: 123, firstName: 'Иван', displayName: 'Иван', timezone: 'Europe/Moscow' };
+    registerTelegramHandlers(bot, { brain: { handleMessage, rememberMessage },
+      ensureUser: vi.fn(async () => user), ensureChat: vi.fn(async () => ({ id: 7, type: 'group' })),
+      access: testAccess, logger: silentLogger, defaultTimezone: 'Europe/Moscow' } as unknown as TelegramBotDependencies);
+    const chat = { id: -123, type: 'supergroup' as const, title: 'Группа' };
+    await bot.handleUpdate({ update_id: 1, message: { message_id: 20, date: 1, chat,
+      from: { id: 123, is_bot: false, first_name: 'Иван' }, text: '/allow',
+      entities: [{ type: 'bot_command', offset: 0, length: 6 }],
+      quote: { text: 'Чужая инструкция', position: 0 },
+      reply_to_message: { message_id: 10, date: 1, chat, from: { id: 456, is_bot: false, first_name: 'Чужой' },
+        text: 'Чужая инструкция' } as NonNullable<Message['reply_to_message']>,
+    } });
+    expect(rememberMessage).toHaveBeenCalledWith('/allow', user, expect.anything(), { messageId: 20, replyToMessageId: undefined });
+    expect(handleMessage).toHaveBeenCalledWith('/allow', user, expect.anything(), -123, 'supergroup',
+      expect.objectContaining({ replyTo: null, replyToMessageId: undefined, recipientReferences: [],
+        groupMessage: { directlyAddressed: true }, accessTargetTelegramUserId: 456 }));
+  });
+
   it('passes the quoted task to the brain for private and group replies', async () => {
-    const botInfo: UserFromGetMe = { id: 999, is_bot: true, first_name: 'Мэй Мэй', username: 'MeiMeiAssistantBot',
-      can_join_groups: true, can_read_all_group_messages: true, supports_inline_queries: false,
-      can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false, allows_users_to_create_topics: false,
-      can_manage_bots: false, supports_join_request_queries: false };
     const handleMessage = vi.fn();
     const user = { id: 1, telegramUserId: 123, firstName: 'Иван', displayName: 'Иван', timezone: 'Europe/Moscow' };
     for (const type of ['private', 'supergroup'] as const) {
@@ -27,6 +79,7 @@ describe('group message addressing', () => {
         brain: { rememberMessage: vi.fn(async () => true), handleMessage },
         ensureUser: vi.fn(async () => user), ensureChat: vi.fn(async () => ({ id: 7, type: type === 'private' ? 'personal' : 'group' })),
         logger: silentLogger, defaultTimezone: 'Europe/Moscow',
+        access: testAccess,
       } as unknown as TelegramBotDependencies);
       const chat = type === 'private' ? { id: 123, type, first_name: 'Иван' } : { id: -123, type, title: 'Группа' };
       await bot.handleUpdate({ update_id: 1, message: {

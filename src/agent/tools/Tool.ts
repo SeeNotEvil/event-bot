@@ -11,6 +11,8 @@ export type ToolDefinition<Input, Output> = {
   terminal?: boolean;
   /** Requires the message author or a server-bound scheduled task owner. */
   requiresUser?: boolean;
+  /** Defaults to an allowed user; owner tools additionally require a live owner request. */
+  access?: 'user' | 'owner';
   availableWhen?: (context: AgentContext) => boolean;
   execute: (context: AgentContext, input: Input) => Promise<Output>;
   transcript?: (input: Input, output: Output) => string | null;

@@ -1,6 +1,7 @@
 import { sql, type Kysely, type Selectable } from 'kysely';
 import type { Database, MemoriesTable } from '../../db/types.js';
 import { memoryWriteSchema, type MemoryNamespace, type MemorySearch, type MemorySource, type MemoryStore, type MemoryWrite } from './MemoryStore.js';
+import type { BotAccess } from '../access/BotAccess.js';
 
 function ownerColumn(namespace: MemoryNamespace) {
   return namespace.kind === 'user' ? 'user_id' as const : 'chat_id' as const;
@@ -13,17 +14,21 @@ function mapMemory(row: Selectable<MemoriesTable>) {
 }
 
 export class MysqlMemoryStore implements MemoryStore {
-  public constructor(private readonly database: Kysely<Database>) {}
+  public constructor(private readonly database: Kysely<Database>, private readonly access?: BotAccess) {}
+
+  private visible() {
+    return this.access ? this.access.allowsUser(sql.ref('memories.source_user_id')) : sql<boolean>`true`;
+  }
 
   public async get(namespace: MemoryNamespace, key: string) {
     const row = await this.database.selectFrom('memories').selectAll().where('namespace', '=', namespace.kind)
-      .where(ownerColumn(namespace), '=', namespace.id).where('memory_key', '=', key).executeTakeFirst();
+      .where(ownerColumn(namespace), '=', namespace.id).where('memory_key', '=', key).where(this.visible()).executeTakeFirst();
     return row ? mapMemory(row) : null;
   }
 
   public async search(namespace: MemoryNamespace, input: MemorySearch) {
     let query = this.database.selectFrom('memories').selectAll().where('namespace', '=', namespace.kind)
-      .where(ownerColumn(namespace), '=', namespace.id);
+      .where(ownerColumn(namespace), '=', namespace.id).where(this.visible());
     if (input.kind) query = query.where('kind', '=', input.kind);
     if (input.beforeId !== null) query = query.where('id', '<', input.beforeId);
     const terms = [...new Set(input.query?.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? [])]
@@ -40,6 +45,8 @@ export class MysqlMemoryStore implements MemoryStore {
   public async save(namespace: MemoryNamespace, rawInput: MemoryWrite, source: MemorySource) {
     const input = memoryWriteSchema.parse(rawInput);
     const values = { kind: input.kind, content: input.content, source_message_id: source.messageId,
+      source_user_id: source.userId ?? (source.messageId === null ? namespace.kind === 'user' ? namespace.id : null
+        : sql<number | null>`(select user_id from conversation_messages where id = ${source.messageId})`),
       source: source.label, updated_at: new Date() };
     const result = input.expectedVersion === null
       ? await this.database.insertInto('memories').values({ ...values, namespace: namespace.kind,
@@ -48,7 +55,7 @@ export class MysqlMemoryStore implements MemoryStore {
       }).onDuplicateKeyUpdate({ id: sql<number>`id` }).executeTakeFirstOrThrow()
       : await this.database.updateTable('memories').set({ ...values, version: input.expectedVersion + 1 })
         .where('namespace', '=', namespace.kind).where(ownerColumn(namespace), '=', namespace.id)
-        .where('memory_key', '=', input.key).where('version', '=', input.expectedVersion).executeTakeFirstOrThrow();
+        .where('memory_key', '=', input.key).where('version', '=', input.expectedVersion).where(this.visible()).executeTakeFirstOrThrow();
     const changed = 'numUpdatedRows' in result ? Number(result.numUpdatedRows) === 1 : Number(result.insertId) > 0;
     return { success: changed, reason: changed ? null : 'VERSION_CONFLICT' as const,
       memory: await this.get(namespace, input.key) };
@@ -56,10 +63,10 @@ export class MysqlMemoryStore implements MemoryStore {
 
   public async forget(namespace: MemoryNamespace, id: number, expectedVersion: number) {
     const result = await this.database.deleteFrom('memories').where('namespace', '=', namespace.kind)
-      .where(ownerColumn(namespace), '=', namespace.id).where('id', '=', id).where('version', '=', expectedVersion).executeTakeFirstOrThrow();
+      .where(ownerColumn(namespace), '=', namespace.id).where('id', '=', id).where('version', '=', expectedVersion).where(this.visible()).executeTakeFirstOrThrow();
     if (Number(result.numDeletedRows) === 1) return { success: true, reason: null, memory: null };
     const row = await this.database.selectFrom('memories').selectAll().where('namespace', '=', namespace.kind)
-      .where(ownerColumn(namespace), '=', namespace.id).where('id', '=', id).executeTakeFirst();
+      .where(ownerColumn(namespace), '=', namespace.id).where('id', '=', id).where(this.visible()).executeTakeFirst();
     return { success: false, reason: row ? 'VERSION_CONFLICT' as const : 'NOT_FOUND' as const, memory: row ? mapMemory(row) : null };
   }
 }

@@ -7,6 +7,7 @@ import type { MemoryContextBuilder } from '../application/memory/MemoryContextBu
 import type { Database } from '../db/types.js';
 import type { AgentContext, AgentTrigger, Chat, ChatMemberReference, ConversationMessage, TelegramChatType, User } from '../types/domain.js';
 import type { AgentRuntime, AgentRunResult } from './AgentRuntime.js';
+import type { BotAccess } from '../application/access/BotAccess.js';
 
 export type Clock = () => DateTime;
 
@@ -14,18 +15,20 @@ export class BotBrain {
   public constructor(
     private readonly database: Kysely<Database>, private readonly runtime: AgentRuntime,
     private readonly threads: ThreadMemory, private readonly memoryBuilder: MemoryContextBuilder,
-    private readonly logger: Logger, private readonly clock: Clock = () => DateTime.now(),
+    private readonly logger: Logger, private readonly access: BotAccess, private readonly clock: Clock = () => DateTime.now(),
   ) {}
 
   public async rememberMessage(message: string, user: User, chat: Chat, metadata: MessageMetadata): Promise<boolean> {
+    await this.access.requireAllowed(user.telegramUserId);
     const thread = await this.threads.ensure(chat.id);
     return this.threads.append(thread.id, user.id, { role: 'user', content: message },
       { ...metadata, authorName: chat.type === 'group' ? user.displayName : undefined });
   }
 
   public async handleMessage(message: string, user: User, chat: Chat, telegramChatId: number,
-    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[]; groupMessage?: AgentContext['groupMessage']; replyTo?: AgentContext['replyTo'] } = {},
+    telegramChatType: TelegramChatType, metadata: MessageMetadata & { stored?: boolean; serviceReason?: string; recipientReferences?: ChatMemberReference[]; groupMessage?: AgentContext['groupMessage']; replyTo?: AgentContext['replyTo']; accessTargetTelegramUserId?: number | null } = {},
   ): Promise<AgentRunResult> {
+    await this.access.requireAllowed(user.telegramUserId);
     // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
     const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
     if (!metadata.stored) await this.rememberMessage(message, user, chat, metadata);
@@ -46,6 +49,7 @@ export class BotBrain {
       recipientReferences: metadata.recipientReferences ?? [],
       groupMessage: metadata.groupMessage,
       replyTo: metadata.replyTo,
+      accessTargetTelegramUserId: metadata.accessTargetTelegramUserId ?? null,
     };
     return this.run(chat.type === 'group' ? `${user.displayName}: ${message}` : message, history, context);
   }
@@ -63,6 +67,7 @@ export class BotBrain {
         .where('notifications.id', '=', trigger.notificationId).where('notifications.chat_id', '=', chatId).executeTakeFirstOrThrow()
       : null;
     if (row.type === 'personal' && job && Number(job.id) !== Number(row.owner_id)) throw new Error('Task owner does not own this personal chat');
+    await this.access.requireAllowed(job ? Number(job.telegram_user_id) : null);
     const { history, memory, threadId } = await this.memoryBuilder.build({ id: chatId, type: row.type,
       userId: row.owner_id === null ? null : Number(row.owner_id) }, JSON.stringify(trigger));
     const timezone = trigger.kind === 'agent_task' ? trigger.timezone : row.timezone;
@@ -80,9 +85,15 @@ export class BotBrain {
   }
 
   private async run(message: string, history: ConversationMessage[], context: AgentContext): Promise<AgentRunResult> {
+    const beforeStep = context.beforeStep;
+    context.beforeStep = async () => {
+      await beforeStep?.();
+      await this.access.requireAllowed(context.telegramUserId);
+    };
     const result = await this.runtime.run(message, history, context);
     if (result.terminalTool === 'send_message') {
       try {
+        await this.access.requireAllowed(context.telegramUserId);
         await this.threads.append(context.threadId, context.userId,
           { role: 'assistant', content: result.transcript },
           { messageId: context.outgoingMessageId, authorName: 'Мэй Мэй' });

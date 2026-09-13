@@ -33,6 +33,7 @@ export type AgentContext = {
   replyTo?: { messageId: number; author: string; text: string | null; quote: string | null; sentAt: string } | null | undefined;
   mentionRecipient?: { id: number; firstName: string } | undefined;
   recipientReferences?: ChatMemberReference[];
+  accessTargetTelegramUserId?: number | null;
   resolvedChatMembers?: ChatMemberReference[];
   beforeStep?: () => Promise<void>;
   beforeSend?: () => Promise<void>;

@@ -14,6 +14,7 @@ type Replacement = {
 };
 
 const INVOCATION_COMMANDS = new Set(['/iraida', '/ask']);
+const ACCESS_COMMANDS = new Set(['/allow', '/deny', '/allowed']);
 const NAME_ADDRESS = /^\s*мэй(?:[ \t]+мэй)?(?=$|[\s,.:;!?—–-])/iu;
 
 function entityText(text: string, entity: MessageEntity): string {
@@ -50,6 +51,7 @@ export function extractGroupRequest(input: GroupMessageInput): string | null {
   const isInvocationCommand =
     INVOCATION_COMMANDS.has(baseCommand) &&
     (commandTarget === undefined || commandTargetsBot);
+  const isAccessCommand = ACCESS_COMMANDS.has(baseCommand) && (commandTarget === undefined || commandTargetsBot);
   // A name at the start is an address; mentions elsewhere can be ordinary discussion.
   const nameAddress = NAME_ADDRESS.exec(input.text);
   const isNameAddress = nameAddress !== null && !input.entities.some((entity) =>
@@ -62,6 +64,7 @@ export function extractGroupRequest(input: GroupMessageInput): string | null {
     mentionEntities.length === 0 &&
     !commandTargetsBot &&
     !isInvocationCommand &&
+    !isAccessCommand &&
     !isNameAddress
   ) {
     return null;
@@ -83,7 +86,7 @@ export function extractGroupRequest(input: GroupMessageInput): string | null {
         length: commandEntity.length,
         value: '',
       });
-    } else if (commandTargetsBot) {
+    } else if (commandTargetsBot || isAccessCommand) {
       replacements.push({
         offset: commandEntity.offset,
         length: commandEntity.length,

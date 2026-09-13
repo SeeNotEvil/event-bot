@@ -5,6 +5,7 @@ import type { AgentContext } from '../../types/domain.js';
 import type { TelegramMembershipGateway } from '../../telegram/TelegramAdapter.js';
 import { checkChatMember, chatMemberSchema } from '../chats/chatMembers.js';
 import { ensureUser } from '../users/ensureUser.js';
+import { AccessDeniedError, type AccessPolicy } from '../access/BotAccess.js';
 
 export const setReminderRecipientInputSchema = z.object({
   eventId: z.number().int().positive().safe(),
@@ -20,7 +21,7 @@ type Result = z.infer<typeof setReminderRecipientOutputSchema>;
 const failure = (reason: NonNullable<Result['reason']>): Result => ({ success: false, changed: false, recipient: null, recipientVersion: null, reason });
 
 export async function setReminderRecipient(database: Kysely<Database>, telegram: TelegramMembershipGateway,
-  context: AgentContext, rawInput: z.infer<typeof setReminderRecipientInputSchema>): Promise<Result> {
+  context: AgentContext, rawInput: z.infer<typeof setReminderRecipientInputSchema>, access?: AccessPolicy): Promise<Result> {
   const input = setReminderRecipientInputSchema.parse(rawInput);
   if (context.userId === null || context.trigger?.kind === 'notification') return failure('USER_REQUEST_REQUIRED');
   const event = await database.selectFrom('events').innerJoin('chats', 'chats.id', 'events.chat_id')
@@ -31,6 +32,7 @@ export async function setReminderRecipient(database: Kysely<Database>, telegram:
   if (!event) return failure('EVENT_NOT_FOUND_OR_INACTIVE');
   if (Number(event.recipient_version) !== input.expectedRecipientVersion) return failure('RECIPIENT_CHANGED');
   const targetId = input.recipientTelegramUserId ?? Number(event.author_telegram_id);
+  if (access && !await access.isAllowed(targetId)) throw new AccessDeniedError();
   let member = { telegramUserId: Number(event.author_telegram_id), firstName: event.first_name ?? 'Пользователь',
     lastName: event.last_name, username: event.telegram_username };
   if (event.chat_type === 'personal') {

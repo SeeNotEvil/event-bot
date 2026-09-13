@@ -4,6 +4,7 @@ import { UnknownToolError } from './ToolRegistry.js';
 import type { ToolRegistry } from './ToolRegistry.js';
 import { StaleAgentTask } from '../../application/StaleAgentTask.js';
 import { ChatMentionError, RecipientMembershipError } from '../../application/chats/chatMembers.js';
+import { AccessDeniedError, isLiveRequest, type AccessPolicy } from '../../application/access/BotAccess.js';
 
 export type ToolRuntimeSuccess = {
   ok: true;
@@ -16,7 +17,7 @@ export type ToolRuntimeFailure = {
   ok: false;
   output: {
     error: {
-      code: 'UNKNOWN_TOOL' | 'INVALID_ARGUMENTS' | 'INVALID_CONTEXT' | 'INVALID_OUTPUT' | 'EXECUTION_FAILED';
+      code: 'ACCESS_DENIED' | 'UNKNOWN_TOOL' | 'INVALID_ARGUMENTS' | 'INVALID_CONTEXT' | 'INVALID_OUTPUT' | 'EXECUTION_FAILED';
       message: string;
       retryable: boolean;
     };
@@ -31,6 +32,7 @@ export class ToolRuntime {
   public constructor(
     private readonly registry: ToolRegistry,
     private readonly logger: Logger,
+    private readonly access: AccessPolicy,
   ) {}
 
   public async execute(
@@ -41,6 +43,15 @@ export class ToolRuntime {
     let tool;
 
     try {
+      if (!await this.access.isAllowed(context.telegramUserId)) {
+        return this.failure('ACCESS_DENIED', 'Access denied.', false);
+      }
+    } catch (error) {
+      this.logger.error({ error, toolName: name }, 'Could not verify tool access');
+      return this.failure('ACCESS_DENIED', 'Access denied.', false);
+    }
+
+    try {
       tool = this.registry.get(name);
     } catch (error) {
       if (error instanceof UnknownToolError) {
@@ -49,6 +60,9 @@ export class ToolRuntime {
       throw error;
     }
 
+    if (tool.access === 'owner' && (!this.access.isOwner(context.telegramUserId) || !isLiveRequest(context))) {
+      return this.failure('ACCESS_DENIED', 'Access denied.', false);
+    }
     if (tool.requiresUser && context.userId === null) {
       return this.failure('INVALID_CONTEXT', 'Сервер не определил владельца этого действия.', false);
     }
@@ -70,6 +84,7 @@ export class ToolRuntime {
       await context.beforeStep?.();
       rawOutput = await tool.execute(context, input.data);
     } catch (error) {
+      if (error instanceof AccessDeniedError) return this.failure('ACCESS_DENIED', 'Access denied.', false);
       if (error instanceof StaleAgentTask || error instanceof RecipientMembershipError) throw error;
       if (error instanceof ChatMentionError) return this.failure('EXECUTION_FAILED', error.message, true);
       this.logger.error(

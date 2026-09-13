@@ -3,6 +3,7 @@ import { loadConfig } from '../src/config/config.js';
 
 const baseEnvironment = {
   TELEGRAM_BOT_TOKEN: 'telegram-token',
+  TELEGRAM_OWNER_ID: '123',
   OPENAI_API_KEY: 'openai-key',
   MYSQL_PASSWORD: 'mysql-password',
 };
@@ -11,6 +12,7 @@ describe('loadConfig', () => {
   it('applies V1 defaults', () => {
     const config = loadConfig(baseEnvironment);
     expect(config.telegram.mode).toBe('polling');
+    expect(config.telegram.ownerId).toBe(123);
     expect(config.openai.model).toBe('gpt-5.4-mini');
     expect(config.openai.maxOutputTokens).toBe(16_384);
     expect(config.defaultTimezone).toBe('Europe/Moscow');
@@ -37,5 +39,11 @@ describe('loadConfig', () => {
 
   it('requires URL and secret in webhook mode', () => {
     expect(() => loadConfig({ ...baseEnvironment, TELEGRAM_MODE: 'webhook' })).toThrow();
+  });
+
+  it('refuses to start without an unambiguous positive owner ID', () => {
+    for (const owner of [undefined, '', ' ', '0', '-123', '123.4', '1e3', '0x7b', '@ivan', '9007199254740992']) {
+      expect(() => loadConfig({ ...baseEnvironment, TELEGRAM_OWNER_ID: owner })).toThrow();
+    }
   });
 });

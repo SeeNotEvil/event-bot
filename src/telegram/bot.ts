@@ -10,16 +10,27 @@ import type { Chat, User } from '../types/domain.js';
 import { extractGroupRequest } from './groupMessage.js';
 import { KeyedSerialQueue } from './KeyedSerialQueue.js';
 import type { TelegramGateway } from './TelegramAdapter.js';
+import { AccessDeniedError, type BotAccess } from '../application/access/BotAccess.js';
 
 export type EnsureUserAction = (input: EnsureUserInput) => Promise<User>;
 export type EnsureChatAction = (input: EnsureChatInput) => Promise<Chat>;
 export type TelegramBotDependencies = {
   database: Kysely<Database>; brain: BotBrain; ensureUser: EnsureUserAction; ensureChat: EnsureChatAction;
   telegram: TelegramGateway; defaultTimezone: string; logger: Logger; queue?: KeyedSerialQueue;
+  access: Pick<BotAccess, 'isAllowed' | 'isOwner' | 'requireAllowed'>;
 };
 
 export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDependencies): void {
   const queue = dependencies.queue ?? new KeyedSerialQueue();
+  bot.use(async (context, next) => {
+    if (!context.from || context.from.is_bot || context.message?.sender_chat) return;
+    if (!await dependencies.access.isAllowed(context.from.id)) {
+      // Acknowledge the button without a notification or any application side effects.
+      if (context.callbackQuery) await context.answerCallbackQuery();
+      return;
+    }
+    await next();
+  });
   async function identify(context: Context) {
     if (!context.from || !context.chat) throw new Error('Telegram update has no user/chat');
     const isPrivate = context.chat.type === 'private';
@@ -42,9 +53,13 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
     if (!text && !isPrivate) return;
     await queue.run(`chat:${chatId}`, async () => {
       try {
+        await dependencies.access.requireAllowed(context.from.id);
         const { user, chat } = await identify(context);
+        const reply = context.message.reply_to_message;
+        const replyAllowed = Boolean(reply && !reply.sender_chat && reply.from
+          && (reply.from.id === context.me.id || (!reply.from.is_bot && await dependencies.access.isAllowed(reply.from.id))));
         const metadata = { messageId: context.message.message_id,
-          replyToMessageId: context.message.reply_to_message?.message_id };
+          replyToMessageId: replyAllowed ? reply?.message_id : undefined };
         if (!text) {
           await dependencies.brain.handleMessage(JSON.stringify({ received: 'non_text_message' }), user, chat,
             chatId, context.chat.type, { ...metadata, serviceReason: 'Only text input is currently supported. Explain this to the user.' });
@@ -57,11 +72,10 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           replyToBot: context.message.reply_to_message?.from?.id === context.me.id,
           botUsername: context.me.username,
         });
-        const reply = context.message.reply_to_message;
         const groupMessage = isPrivate ? undefined : {
           directlyAddressed: request !== null,
         };
-        const replyTo = reply ? {
+        const replyTo = reply && replyAllowed ? {
           messageId: reply.message_id,
           author: reply.from?.id === context.me.id ? 'Мэй Мэй'
             : reply.from ? [reply.from.first_name, reply.from.last_name].filter(Boolean).join(' ')
@@ -75,13 +89,20 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           ...(context.message.entities ?? context.message.caption_entities ?? [])
             .flatMap((entity) => entity.type === 'text_mention' ? [entity.user] : []),
         ].filter((person) => person !== undefined).filter((person) => !person.is_bot);
-        const recipientReferences = referencedUsers.map((person) => ({
+        const allowedReferences = [];
+        for (const person of referencedUsers) {
+          if (await dependencies.access.isAllowed(person.id)) allowedReferences.push(person);
+        }
+        const recipientReferences = allowedReferences.map((person) => ({
           telegramUserId: person.id, firstName: person.first_name,
           lastName: person.last_name ?? null, username: person.username ?? null,
         }));
         await dependencies.brain.handleMessage(request ?? text, user, chat, chatId, context.chat.type,
-          { ...metadata, stored: true, recipientReferences, groupMessage, replyTo });
+          { ...metadata, stored: true, recipientReferences, groupMessage, replyTo,
+            accessTargetTelegramUserId: dependencies.access.isOwner(context.from.id) && reply?.from
+              && !reply.from.is_bot && !reply.sender_chat ? reply.from.id : null });
       } catch (error) {
+        if (error instanceof AccessDeniedError) return;
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram message processing failed');
       }
     });
@@ -95,6 +116,7 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
     const data = context.callbackQuery.data;
     await queue.run(`chat:${chatId}`, async () => {
       try {
+        await dependencies.access.requireAllowed(context.from.id);
         const { chat } = await identify(context);
         const readiness = /^ready:(\d+):(\d+):([01])$/.exec(data);
         if (readiness) {
@@ -106,6 +128,7 @@ export function registerTelegramHandlers(bot: Bot, dependencies: TelegramBotDepe
           return;
         }
       } catch (error) {
+        if (error instanceof AccessDeniedError) return;
         dependencies.logger.error({ error, telegramChatId: chatId }, 'Telegram callback processing failed');
       }
     });
