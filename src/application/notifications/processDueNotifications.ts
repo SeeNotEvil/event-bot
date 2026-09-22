@@ -47,6 +47,7 @@ export type ProcessDueNotificationsOptions = {
   batchSize: number;
   lockTimeoutMs: number;
   notificationIds?: number[];
+  includeAgentTasks?: boolean;
   signal?: AbortSignal;
   run: (notification: DueNotification, guard: () => Promise<void>) => Promise<void | 'skipped'>;
 };
@@ -64,6 +65,7 @@ async function claimDueNotification(
   lockTimeoutMs: number,
   processedIds: number[],
   onlyNotificationIds?: number[],
+  includeAgentTasks = true,
 ): Promise<ClaimedNotification | undefined> {
   if (onlyNotificationIds?.length === 0) {
     return undefined;
@@ -154,6 +156,9 @@ async function claimDueNotification(
       .forUpdate()
       .skipLocked();
 
+    if (!includeAgentTasks) {
+      query = query.where('notifications.kind', '!=', 'agent_task');
+    }
     if (onlyNotificationIds) {
       query = query.where('notifications.id', 'in', onlyNotificationIds);
     }
@@ -294,7 +299,7 @@ async function releaseFailedNotification(
       lock_token: null,
       locked_at: null,
       last_error: message.slice(0, 4_000),
-      retry_at: new Date(Date.now() + 30_000),
+      retry_at: new Date(Date.now() + 15 * 60_000),
       updated_at: now,
     })
     .where('id', '=', notification.notificationId)
@@ -322,6 +327,7 @@ export async function processDueNotifications(
       options.lockTimeoutMs,
       processedIds,
       options.notificationIds,
+      options.includeAgentTasks,
     );
     if (!notification) {
       break;

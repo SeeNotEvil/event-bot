@@ -6,8 +6,6 @@ import OpenAI from 'openai';
 import { createBrain } from './agent/createBrain.js';
 import { BotAccess } from './application/access/BotAccess.js';
 import { requireChatMember } from './application/chats/chatMembers.js';
-import { MysqlThreadMemory } from './application/memory/MysqlThreadMemory.js';
-import { SummaryUpdater } from './application/memory/SummaryUpdater.js';
 import { processDueNotifications } from './application/notifications/processDueNotifications.js';
 import { Scheduler } from './application/scheduler/Scheduler.js';
 import { loadConfig } from './config/config.js';
@@ -39,22 +37,19 @@ export async function runNotificationWorker(): Promise<void> {
   const logger = createLogger(config.logLevel);
   const database = createDatabase(config.database);
   const requestTimeoutMs = Math.min(10_000, Math.floor(config.notificationWorker.lockTimeoutMs / 3));
+  const lockTimeoutMs = Math.max(config.notificationWorker.lockTimeoutMs,
+    config.openai.timeoutMs + requestTimeoutMs + 5_000);
   const telegram = new TelegramAdapter(new Api(config.telegram.token, {
     timeoutSeconds: requestTimeoutMs / 1000,
   }));
   const openai = new OpenAI({
     apiKey: config.openai.apiKey,
-    timeout: Math.min(config.openai.timeoutMs, requestTimeoutMs),
+    timeout: config.openai.timeoutMs,
     maxRetries: 0,
   });
   const brain = createBrain(database, telegram, openai.responses, config, logger);
   const access = new BotAccess(database, config.telegram.ownerId);
   const scheduler = new Scheduler(database, access);
-  const summaryTimeoutMs = Math.min(config.openai.timeoutMs, 20_000);
-  const summaryClient = new OpenAI({ apiKey: config.openai.apiKey, timeout: summaryTimeoutMs, maxRetries: 0 });
-  const summaries = new SummaryUpdater(new MysqlThreadMemory(database, access), summaryClient.responses,
-    config.openai.model, config.conversationHistoryLimit, Math.max(config.notificationWorker.lockTimeoutMs, summaryTimeoutMs + 5_000),
-    config.openai.maxOutputTokens, logger);
   const abortController = new AbortController();
   const stop = (signal: NodeJS.Signals): void => {
     if (abortController.signal.aborted) {
@@ -95,7 +90,9 @@ export async function runNotificationWorker(): Promise<void> {
         const result = await processDueNotifications(database, {
           now,
           batchSize: config.notificationWorker.batchSize,
-          lockTimeoutMs: config.notificationWorker.lockTimeoutMs,
+          lockTimeoutMs,
+          // Pause scheduled agent messages until automatic summaries are revised.
+          includeAgentTasks: false,
           signal: abortController.signal,
           run: async (notification, guard) => {
             const checkRecipient = async () => {
@@ -136,14 +133,6 @@ export async function runNotificationWorker(): Promise<void> {
         }
       } catch (error) {
         logger.error({ error }, 'Notification batch failed');
-      }
-
-      if (!abortController.signal.aborted) {
-        try {
-          await summaries.processNext();
-        } catch (error) {
-          logger.error({ error }, 'Thread summary dispatch failed');
-        }
       }
 
       const elapsed = Date.now() - startedAt;

@@ -24,7 +24,7 @@ const environmentSchema = z
 
     OPENAI_API_KEY: z.string().min(1),
     OPENAI_MODEL: z.string().min(1).default('gpt-5.4-mini'),
-    OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+    OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     OPENAI_MAX_OUTPUT_TOKENS: z.coerce
       .number()
       .int()

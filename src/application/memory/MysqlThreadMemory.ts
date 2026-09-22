@@ -115,7 +115,7 @@ export class MysqlThreadMemory implements ThreadMemory {
 
   public async failSummary(batch: SummaryBatch) {
     await this.database.updateTable('threads').set({ lock_token: null, locked_at: null,
-      retry_at: new Date(Date.now() + 30_000), last_error: 'Summary generation failed', updated_at: new Date(),
+      retry_at: new Date(Date.now() + 15 * 60_000), last_error: 'Summary generation failed', updated_at: new Date(),
     }).where('id', '=', batch.id).where('lock_token', '=', batch.token).execute();
   }
 }

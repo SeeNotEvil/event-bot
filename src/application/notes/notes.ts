@@ -62,24 +62,24 @@ export async function createNote(database: Kysely<Database>, chatId: number, use
     }).executeTakeFirstOrThrow();
     const noteId = Number(result.insertId);
     if (!Number.isSafeInteger(noteId) || noteId <= 0) throw new Error('Database did not return a safe note ID');
-    return (await readNote(transaction, chatId, { id: noteId }))!;
+    return (await readNote(transaction, userId, { id: noteId }))!;
   });
 }
 
-export async function readNote(database: Kysely<Database>, chatId: number, rawInput: z.infer<typeof readNoteSchema>) {
+export async function readNote(database: Kysely<Database>, userId: number, rawInput: z.infer<typeof readNoteSchema>) {
   const input = readNoteSchema.parse(rawInput);
-  const row = await database.selectFrom('notes').selectAll().where('chat_id', '=', chatId)
+  const row = await database.selectFrom('notes').selectAll().where('created_by_user_id', '=', userId)
     .where('id', '=', input.id).executeTakeFirst();
   return row ? mapNote(row) : null;
 }
 
-export async function searchNotes(database: Kysely<Database>, chatId: number, rawInput: z.infer<typeof searchNotesSchema>) {
+export async function searchNotes(database: Kysely<Database>, userId: number, rawInput: z.infer<typeof searchNotesSchema>) {
   const input = searchNotesSchema.parse(rawInput);
   // Fetch excerpts in SQL so listing notes never loads entire documents.
   let query = database.selectFrom('notes')
     .select(['id', 'chat_id', 'created_by_user_id', 'title', 'tags', 'version', 'created_at', 'updated_at'])
     .select([sql<string>`left(content, 300)`.as('excerpt'), sql<number>`char_length(content) > 300`.as('content_truncated')])
-    .where('chat_id', '=', chatId);
+    .where('created_by_user_id', '=', userId);
   if (input.query !== null) {
     const pattern = `%${input.query.replace(/[!%_]/g, '!$&')}%`;
     query = query.where(sql<boolean>`(title like ${pattern} escape '!' or content like ${pattern} escape '!')`);
@@ -93,31 +93,31 @@ export async function searchNotes(database: Kysely<Database>, chatId: number, ra
   return { notes, nextBeforeId: rows.length > limit ? notes.at(-1)!.id : null };
 }
 
-export async function updateNote(database: Kysely<Database>, chatId: number, rawInput: z.infer<typeof updateNoteSchema>) {
+export async function updateNote(database: Kysely<Database>, userId: number, rawInput: z.infer<typeof updateNoteSchema>) {
   const input = updateNoteSchema.parse(rawInput);
-  return changeNote(database, chatId, input, input);
+  return changeNote(database, userId, input, input);
 }
 
-export async function deleteNote(database: Kysely<Database>, chatId: number, rawInput: z.infer<typeof noteReferenceSchema>) {
-  return changeNote(database, chatId, noteReferenceSchema.parse(rawInput), null);
+export async function deleteNote(database: Kysely<Database>, userId: number, rawInput: z.infer<typeof noteReferenceSchema>) {
+  return changeNote(database, userId, noteReferenceSchema.parse(rawInput), null);
 }
 
-async function changeNote(database: Kysely<Database>, chatId: number, ref: z.infer<typeof noteReferenceSchema>,
+async function changeNote(database: Kysely<Database>, userId: number, ref: z.infer<typeof noteReferenceSchema>,
   update: z.infer<typeof updateNoteSchema> | null) {
   return database.transaction().execute(async (transaction) => {
-    const row = await transaction.selectFrom('notes').selectAll().where('chat_id', '=', chatId)
+    const row = await transaction.selectFrom('notes').selectAll().where('created_by_user_id', '=', userId)
       .where('id', '=', ref.id).forUpdate().executeTakeFirst();
     if (!row) return { success: false, reason: 'NOT_FOUND' as const, note: null };
     if (Number(row.version) !== ref.expectedVersion) {
       return { success: false, reason: 'VERSION_CONFLICT' as const, note: mapNote(row) };
     }
     if (update === null) {
-      await transaction.deleteFrom('notes').where('chat_id', '=', chatId).where('id', '=', ref.id).execute();
+      await transaction.deleteFrom('notes').where('created_by_user_id', '=', userId).where('id', '=', ref.id).execute();
       return { success: true, reason: null, note: null };
     }
     await transaction.updateTable('notes').set({ title: update.title, content: update.content,
       tags: JSON.stringify(normalizeTags(update.tags)), version: ref.expectedVersion + 1, updated_at: new Date(),
-    }).where('chat_id', '=', chatId).where('id', '=', ref.id).execute();
-    return { success: true, reason: null, note: await readNote(transaction, chatId, { id: ref.id }) };
+    }).where('created_by_user_id', '=', userId).where('id', '=', ref.id).execute();
+    return { success: true, reason: null, note: await readNote(transaction, userId, { id: ref.id }) };
   });
 }
