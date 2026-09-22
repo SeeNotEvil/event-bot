@@ -447,6 +447,8 @@ describeWithMysql('MySQL application actions', () => {
     const unique = Date.now() + 30_000;
     const user = await ensureUser(database, { telegramUserId: unique, telegramChatId: unique,
       telegramUsername: null, firstName: 'Память', lastName: null, defaultTimezone: 'Europe/Moscow' });
+    const secondUser = await ensureUser(database, { telegramUserId: unique + 1, telegramChatId: unique + 1,
+      telegramUsername: null, firstName: 'Другой участник', lastName: null, defaultTimezone: 'Europe/Moscow' });
     const personal = await ensureChat(database, { type: 'personal', userId: user.id, timezone: user.timezone });
     const group = await ensureChat(database, { type: 'group', telegramChatId: -unique, title: 'Memory group', timezone: user.timezone });
     const other = await ensureChat(database, { type: 'group', telegramChatId: -unique - 1, title: 'Other group', timezone: user.timezone });
@@ -487,9 +489,43 @@ describeWithMysql('MySQL application actions', () => {
       expect(next.memories).toHaveLength(1);
       expect(new Set([...page.memories, ...next.memories].map((memory) => memory.id)).size).toBe(11);
       expect(next.nextBeforeId).toBeNull();
+
+      const threads = new MysqlThreadMemory(database);
+      const thread = await threads.ensure(group.id);
+      await threads.append(thread.id, user.id, { role: 'user', content: 'Мои правила напоминаний' });
+      const shared = await store.save(groupScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: null, content: 'Общие напоминания', expectedVersion: null }, source);
+      const personalRule = await store.save(groupScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: user.id, content: 'Напоминания вечером', expectedVersion: null }, source);
+      expect(shared.success).toBe(true);
+      expect(personalRule).toMatchObject({ success: true, memory: { subjectUserId: user.id } });
+      expect(await store.save(groupScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: secondUser.id, content: 'Человек ещё не известен группе', expectedVersion: null }, source))
+        .toMatchObject({ success: false, reason: 'INVALID_SUBJECT', memory: null });
+      await threads.append(thread.id, secondUser.id, { role: 'user', content: 'Мои другие правила напоминаний' });
+      const secondRule = await store.save(groupScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: secondUser.id, content: 'Напоминания утром', expectedVersion: null }, source);
+      expect(secondRule.success).toBe(true);
+      expect(secondRule.memory!.id).not.toBe(personalRule.memory!.id);
+      const firstContext = await builder.build(group, 'напоминания', undefined, user.id);
+      const secondContext = await builder.build(group, 'напоминания', undefined, secondUser.id);
+      expect(firstContext.memory.rules.memories.map((memory) => memory.id))
+        .toEqual([personalRule.memory!.id, shared.memory!.id]);
+      expect(firstContext.memory.relevant.memories.some((memory) => memory.id === secondRule.memory!.id)).toBe(false);
+      expect(secondContext.memory.rules.memories.map((memory) => memory.id))
+        .toEqual([secondRule.memory!.id, shared.memory!.id]);
+      expect(await store.save(groupScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: user.id, content: 'Напоминания в 20:00', expectedVersion: 1 }, source))
+        .toMatchObject({ success: true, memory: { version: 2 } });
+      expect((await store.get(groupScope, 'reminders', secondUser.id))?.content).toBe('Напоминания утром');
+      expect((await store.get(groupScope, 'reminders'))?.content).toBe('Общие напоминания');
+      expect(await store.save(privateScope, { key: 'reminders', kind: 'procedural',
+        subjectUserId: secondUser.id, content: 'Чужое правило в личной области', expectedVersion: null }, source))
+        .toMatchObject({ success: false, reason: 'INVALID_SUBJECT' });
+      expect((await store.get(privateScope, 'profile'))?.subjectUserId).toBe(user.id);
     } finally {
       await database.deleteFrom('chats').where('id', 'in', [group.id, other.id]).execute();
-      await database.deleteFrom('users').where('id', '=', user.id).execute();
+      await database.deleteFrom('users').where('id', 'in', [user.id, secondUser.id]).execute();
     }
   });
 
@@ -521,7 +557,7 @@ describeWithMysql('MySQL application actions', () => {
       const second = (await threads.claimSummary(15, 60_000))!;
       expect(second.summary).toBe('Первая сводка');
       expect(second.messages.map((message) => message.content)).toEqual(Array.from({ length: 10 }, (_, i) => `message-${i + 10}`));
-      await expect(threads.completeSummary(second, 'x'.repeat(4_001))).rejects.toThrow();
+      await expect(threads.completeSummary(second, 'x'.repeat(8_001))).rejects.toThrow();
       expect(await threads.completeSummary(second, 'Обновлённая сводка')).toBe(true);
       expect(await threads.ensure(chat.id)).toMatchObject({ summary: 'Обновлённая сводка', summaryCursor: second.messages.at(-1)!.id, summaryVersion: 2 });
       const recent = await threads.read(thread.id, 15);

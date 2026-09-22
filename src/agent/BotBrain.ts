@@ -30,7 +30,7 @@ export class BotBrain {
   ): Promise<AgentRunResult> {
     await this.access.requireAllowed(user.telegramUserId);
     // Build before appending for callers without a Telegram message ID; ordinary Telegram updates are already archived.
-    const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId);
+    const { history, memory, threadId } = await this.memoryBuilder.build(chat, message, metadata.messageId, user.id);
     if (!metadata.stored) await this.rememberMessage(message, user, chat, metadata);
     let sourceQuery = this.database.selectFrom('conversation_messages').select('id')
       .where('thread_id', '=', threadId).where('user_id', '=', user.id).where('role', '=', 'user');
@@ -68,8 +68,11 @@ export class BotBrain {
       : null;
     if (row.type === 'personal' && job && Number(job.id) !== Number(row.owner_id)) throw new Error('Task owner does not own this personal chat');
     await this.access.requireAllowed(job ? Number(job.telegram_user_id) : null);
+    const recipient = hooks.mentionRecipient ? await this.database.selectFrom('users').select('id')
+      .where('telegram_user_id', '=', hooks.mentionRecipient.id).executeTakeFirst() : null;
     const { history, memory, threadId } = await this.memoryBuilder.build({ id: chatId, type: row.type,
-      userId: row.owner_id === null ? null : Number(row.owner_id) }, JSON.stringify(trigger));
+      userId: row.owner_id === null ? null : Number(row.owner_id) }, JSON.stringify(trigger), undefined,
+    recipient ? Number(recipient.id) : job ? Number(job.id) : null);
     const timezone = trigger.kind === 'agent_task' ? trigger.timezone : row.timezone;
     const now = this.clock().setZone(timezone).toISO({ suppressMilliseconds: true });
     if (!now) throw new Error('Invalid chat timezone');

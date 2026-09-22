@@ -81,6 +81,8 @@ export interface MemoriesTable {
   content: string;
   source_message_id: number | null;
   source_user_id: Generated<number | null>;
+  subject_user_id: Generated<number | null>;
+  subject_scope_id: Generated<number>;
   source: string;
   version: Generated<number>;
   created_at: CreatedTimestamp;

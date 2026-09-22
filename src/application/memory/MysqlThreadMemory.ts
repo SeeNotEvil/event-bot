@@ -8,7 +8,8 @@ import { AccessDeniedError, type BotAccess } from '../access/BotAccess.js';
 
 const messageSchema = z.object({ role: z.enum(['user', 'assistant']), content: z.string().min(1).max(65_535) });
 export const SUMMARY_BATCH_SIZE = 10;
-export const summarySchema = z.string().trim().min(1).max(4_000);
+export const SUMMARY_MAX_LENGTH = 8_000;
+export const summarySchema = z.string().trim().min(1).max(SUMMARY_MAX_LENGTH);
 
 function mapMessage(row: {
   id: number; role: 'user' | 'assistant'; content: string; author_name: string | null;

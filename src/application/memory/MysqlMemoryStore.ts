@@ -10,6 +10,7 @@ function ownerColumn(namespace: MemoryNamespace) {
 function mapMemory(row: Selectable<MemoriesTable>) {
   return { id: Number(row.id), key: row.memory_key, kind: row.kind, content: row.content,
     version: Number(row.version), source: row.source,
+    subjectUserId: row.subject_user_id === null ? null : Number(row.subject_user_id),
     sourceMessageId: row.source_message_id === null ? null : Number(row.source_message_id), updatedAt: row.updated_at };
 }
 
@@ -17,12 +18,14 @@ export class MysqlMemoryStore implements MemoryStore {
   public constructor(private readonly database: Kysely<Database>, private readonly access?: BotAccess) {}
 
   private visible() {
-    return this.access ? this.access.allowsUser(sql.ref('memories.source_user_id')) : sql<boolean>`true`;
+    return this.access ? sql<boolean>`${this.access.allowsUser(sql.ref('memories.source_user_id'))}
+      and (memories.subject_user_id is null or ${this.access.allowsUser(sql.ref('memories.subject_user_id'))})` : sql<boolean>`true`;
   }
 
-  public async get(namespace: MemoryNamespace, key: string) {
+  public async get(namespace: MemoryNamespace, key: string, subjectUserId: number | null = namespace.kind === 'user' ? namespace.id : null) {
     const row = await this.database.selectFrom('memories').selectAll().where('namespace', '=', namespace.kind)
-      .where(ownerColumn(namespace), '=', namespace.id).where('memory_key', '=', key).where(this.visible()).executeTakeFirst();
+      .where(ownerColumn(namespace), '=', namespace.id).where('memory_key', '=', key)
+      .where('subject_user_id', subjectUserId === null ? 'is' : '=', subjectUserId).where(this.visible()).executeTakeFirst();
     return row ? mapMemory(row) : null;
   }
 
@@ -30,6 +33,11 @@ export class MysqlMemoryStore implements MemoryStore {
     let query = this.database.selectFrom('memories').selectAll().where('namespace', '=', namespace.kind)
       .where(ownerColumn(namespace), '=', namespace.id).where(this.visible());
     if (input.kind) query = query.where('kind', '=', input.kind);
+    const subjectUserId = input.subjectUserId;
+    if (subjectUserId !== undefined) query = query.where((eb) => {
+      const subject = eb('subject_user_id', subjectUserId === null ? 'is' : '=', subjectUserId);
+      return input.includeShared ? eb.or([subject, eb('subject_user_id', 'is', null)]) : subject;
+    });
     if (input.beforeId !== null) query = query.where('id', '<', input.beforeId);
     const terms = [...new Set(input.query?.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? [])]
       .sort((a, b) => b.length - a.length).slice(0, 8);
@@ -43,8 +51,13 @@ export class MysqlMemoryStore implements MemoryStore {
   }
 
   public async save(namespace: MemoryNamespace, rawInput: MemoryWrite, source: MemorySource) {
-    const input = memoryWriteSchema.parse(rawInput);
-    const values = { kind: input.kind, content: input.content, source_message_id: source.messageId,
+    const input = memoryWriteSchema.parse({ ...rawInput,
+      subjectUserId: rawInput.subjectUserId ?? (namespace.kind === 'user' ? namespace.id : null) });
+    if (!await this.validSubject(namespace, input.subjectUserId)) {
+      return { success: false, reason: 'INVALID_SUBJECT' as const, memory: null };
+    }
+    const values = { kind: input.kind, content: input.content,
+      subject_user_id: input.subjectUserId, subject_scope_id: input.subjectUserId ?? 0, source_message_id: source.messageId,
       source_user_id: source.userId ?? (source.messageId === null ? namespace.kind === 'user' ? namespace.id : null
         : sql<number | null>`(select user_id from conversation_messages where id = ${source.messageId})`),
       source: source.label, updated_at: new Date() };
@@ -55,10 +68,26 @@ export class MysqlMemoryStore implements MemoryStore {
       }).onDuplicateKeyUpdate({ id: sql<number>`id` }).executeTakeFirstOrThrow()
       : await this.database.updateTable('memories').set({ ...values, version: input.expectedVersion + 1 })
         .where('namespace', '=', namespace.kind).where(ownerColumn(namespace), '=', namespace.id)
-        .where('memory_key', '=', input.key).where('version', '=', input.expectedVersion).where(this.visible()).executeTakeFirstOrThrow();
+        .where('memory_key', '=', input.key).where('subject_user_id', input.subjectUserId === null ? 'is' : '=', input.subjectUserId)
+        .where('version', '=', input.expectedVersion).where(this.visible()).executeTakeFirstOrThrow();
     const changed = 'numUpdatedRows' in result ? Number(result.numUpdatedRows) === 1 : Number(result.insertId) > 0;
     return { success: changed, reason: changed ? null : 'VERSION_CONFLICT' as const,
-      memory: await this.get(namespace, input.key) };
+      memory: await this.get(namespace, input.key, input.subjectUserId) };
+  }
+
+  private async validSubject(namespace: MemoryNamespace, subjectUserId: number | null): Promise<boolean> {
+    if (namespace.kind === 'user') return subjectUserId === namespace.id;
+    if (subjectUserId === null) return true;
+    let query = this.database.selectFrom('users').select('id').where('id', '=', subjectUserId)
+      .where((eb) => eb.or([
+        eb.exists(eb.selectFrom('conversation_messages').innerJoin('threads', 'threads.id', 'conversation_messages.thread_id')
+          .select('conversation_messages.id').where('threads.chat_id', '=', namespace.id)
+          .where('conversation_messages.user_id', '=', subjectUserId)),
+        eb.exists(eb.selectFrom('events').select('id').where('chat_id', '=', namespace.id)
+          .where((event) => event.or([event('user_id', '=', subjectUserId), event('reminder_recipient_user_id', '=', subjectUserId)]))),
+      ]));
+    if (this.access) query = query.where(this.access.allowsUser(sql.ref('users.id')));
+    return Boolean(await query.executeTakeFirst());
   }
 
   public async forget(namespace: MemoryNamespace, id: number, expectedVersion: number) {

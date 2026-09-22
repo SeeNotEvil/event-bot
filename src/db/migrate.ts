@@ -18,6 +18,8 @@ import * as reminderRecipientMigration from './migrations/009_reminder_recipient
 import * as schedulerMoodsMigration from './migrations/010_scheduler_moods.js';
 import * as notesMigration from './migrations/011_notes.js';
 import * as botAccessMigration from './migrations/012_bot_access.js';
+import * as memorySubjectsMigration from './migrations/013_memory_subjects.js';
+import * as reviewedThreadMemoryMigration from './migrations/014_reviewed_thread_memory.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -35,6 +37,8 @@ const migrationProvider: MigrationProvider = {
       '010_scheduler_moods': schedulerMoodsMigration,
       '011_notes': notesMigration,
       '012_bot_access': botAccessMigration,
+      '013_memory_subjects': memorySubjectsMigration,
+      '014_reviewed_thread_memory': reviewedThreadMemoryMigration,
     }),
 };
 

@@ -15,16 +15,17 @@ export type MemoryContext = {
 export class MemoryContextBuilder {
   public constructor(private readonly threads: ThreadMemory, private readonly memories: MemoryStore, private readonly recentLimit: number) {}
 
-  public async build(chat: Pick<Chat, 'id' | 'type' | 'userId'>, query: string, excludeMessageId?: number) {
+  public async build(chat: Pick<Chat, 'id' | 'type' | 'userId'>, query: string, excludeMessageId?: number, actorUserId?: number | null) {
     if (chat.type === 'personal' && chat.userId === null) throw new Error('A personal chat requires an owner');
     const namespace: MemoryNamespace = chat.type === 'personal'
       ? { kind: 'user', id: chat.userId! } : { kind: 'chat', id: chat.id };
     const thread = await this.threads.ensure(chat.id);
+    const subjectUserId = chat.type === 'personal' ? chat.userId! : actorUserId ?? null;
     const [messages, profile, rules, relevant] = await Promise.all([
       this.threads.read(thread.id, this.recentLimit, undefined, excludeMessageId),
       this.memories.get(namespace, 'profile'),
-      this.memories.search(namespace, { query: null, kind: 'procedural', beforeId: null }),
-      this.memories.search(namespace, { query, kind: null, beforeId: null }),
+      this.memories.search(namespace, { query: null, kind: 'procedural', beforeId: null, subjectUserId, includeShared: true }),
+      this.memories.search(namespace, { query, kind: null, beforeId: null, subjectUserId, includeShared: true }),
     ]);
     const seen = new Set(profile ? [profile.id] : []);
     const unique = (page: MemoryPage): MemoryPage => ({ ...page, memories: page.memories.filter((entry) => {

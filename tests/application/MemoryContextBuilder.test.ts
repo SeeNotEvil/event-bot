@@ -6,7 +6,7 @@ import type { ThreadMemory } from '../../src/application/memory/ThreadMemory.js'
 describe('MemoryContextBuilder', () => {
   it('keeps reply branches and message dates while including each saved memory only once', async () => {
     const profile: Memory = { id: 1, key: 'profile', kind: 'procedural', content: 'Обращайся на ты', version: 1,
-      source: 'addressed_message', sourceMessageId: null, updatedAt: '2026-09-10T12:00:00.000Z' };
+      source: 'addressed_message', sourceMessageId: null, subjectUserId: 1, updatedAt: '2026-09-10T12:00:00.000Z' };
     const rule: Memory = { ...profile, id: 2, key: 'work', content: 'Встречи по будням' };
     const fact: Memory = { ...profile, id: 3, key: 'office', kind: 'semantic', content: 'Кабинет 712' };
     const messages = [
