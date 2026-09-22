@@ -20,6 +20,7 @@ import * as notesMigration from './migrations/011_notes.js';
 import * as botAccessMigration from './migrations/012_bot_access.js';
 import * as memorySubjectsMigration from './migrations/013_memory_subjects.js';
 import * as reviewedThreadMemoryMigration from './migrations/014_reviewed_thread_memory.js';
+import * as reviewedThreadMemoryCursorMigration from './migrations/015_reviewed_thread_memory_cursor.js';
 import type { Database } from './types.js';
 
 const migrationProvider: MigrationProvider = {
@@ -39,6 +40,7 @@ const migrationProvider: MigrationProvider = {
       '012_bot_access': botAccessMigration,
       '013_memory_subjects': memorySubjectsMigration,
       '014_reviewed_thread_memory': reviewedThreadMemoryMigration,
+      '015_reviewed_thread_memory_cursor': reviewedThreadMemoryCursorMigration,
     }),
 };
 
