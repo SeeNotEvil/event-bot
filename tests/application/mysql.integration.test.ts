@@ -1080,6 +1080,7 @@ describeWithMysql('MySQL application actions', () => {
         }),
       ).resolves.toMatchObject({ success: false, reason: 'NOT_FOUND_OR_NOT_PENDING' });
 
+      const notificationLogger = { error: vi.fn() };
       const cancelledDelivery = vi.fn(async () => undefined);
       await expect(
         processDueNotifications(database, {
@@ -1087,6 +1088,7 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [secondReminderResult.notification.id],
+          logger: notificationLogger,
           run: async (_notification, guard) => {
             // The user cancels while the model is composing the reminder.
             await expect(
@@ -1103,6 +1105,7 @@ describeWithMysql('MySQL application actions', () => {
         }),
       ).resolves.toEqual({ claimed: 1, sent: 0, failed: 0, skipped: 1 });
       expect(cancelledDelivery).not.toHaveBeenCalled();
+      expect(notificationLogger.error).not.toHaveBeenCalled();
 
       const reactivatedReminder = await createNotification(
         database,
@@ -1120,19 +1123,32 @@ describeWithMysql('MySQL application actions', () => {
         },
       });
 
-      const failedDelivery = vi.fn(async () => {
-        throw new Error('Temporary Telegram failure');
-      });
+      const deliveryError = new Error('Temporary Telegram failure');
+      const failedDelivery = vi.fn(async () => { throw deliveryError; });
       await expect(
         processDueNotifications(database, {
           now: new Date('2035-09-05T07:30:00.000Z'),
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
+          logger: notificationLogger,
           run: async (_notification, guard) => { await guard(); await failedDelivery(); },
         }),
       ).resolves.toEqual({ claimed: 1, sent: 0, failed: 1, skipped: 0 });
       expect(failedDelivery).toHaveBeenCalledTimes(1);
+      expect(notificationLogger.error).toHaveBeenCalledTimes(1);
+      expect(notificationLogger.error).toHaveBeenCalledWith(
+        {
+          error: deliveryError,
+          notificationId: firstReminderResult.notification.id,
+          kind: 'reminder',
+          chatId: firstChat.id,
+          telegramChatId: existingUser.telegramChatId,
+          eventId: dentist.id,
+          scheduleId: null,
+        },
+        'Notification processing failed',
+      );
 
       const failedRow = await database
         .selectFrom('notifications')
@@ -1148,6 +1164,7 @@ describeWithMysql('MySQL application actions', () => {
 
       await database.updateTable('notifications').set({ retry_at: null })
         .where('id', '=', firstReminderResult.notification.id).execute();
+      notificationLogger.error.mockClear();
       const delivered = vi.fn<(notification: DueNotification) => Promise<void>>(async () => undefined);
       await expect(
         processDueNotifications(database, {
@@ -1155,9 +1172,11 @@ describeWithMysql('MySQL application actions', () => {
           batchSize: 10,
           lockTimeoutMs: 60_000,
           notificationIds: [firstReminderResult.notification.id],
+          logger: notificationLogger,
           run: async (notification, guard) => { await guard(); await delivered(notification); },
         }),
       ).resolves.toEqual({ claimed: 1, sent: 1, failed: 0, skipped: 0 });
+      expect(notificationLogger.error).not.toHaveBeenCalled();
       expect(delivered).toHaveBeenCalledWith(
         expect.objectContaining({
           notificationId: firstReminderResult.notification.id,

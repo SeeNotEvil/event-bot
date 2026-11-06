@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
+import type { Logger } from 'pino';
 import type { Database } from '../../db/types.js';
 import { formatDateForDatabase } from './time.js';
 import { StaleAgentTask } from '../StaleAgentTask.js';
@@ -49,6 +50,7 @@ export type ProcessDueNotificationsOptions = {
   notificationIds?: number[];
   includeAgentTasks?: boolean;
   signal?: AbortSignal;
+  logger?: Pick<Logger, 'error'>;
   run: (notification: DueNotification, guard: () => Promise<void>) => Promise<void | 'skipped'>;
 };
 
@@ -350,6 +352,18 @@ export async function processDueNotifications(
         result.skipped += 1;
         continue;
       }
+      options.logger?.error(
+        {
+          error,
+          notificationId: notification.notificationId,
+          kind: notification.kind,
+          chatId: notification.chatId,
+          telegramChatId: notification.telegramChatId,
+          eventId: notification.eventId,
+          scheduleId: notification.scheduleId,
+        },
+        'Notification processing failed',
+      );
       await releaseFailedNotification(database, notification, new Date(), error);
       result.failed += 1;
       continue;

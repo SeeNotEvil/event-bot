@@ -96,6 +96,7 @@ export async function runNotificationWorker(): Promise<void> {
           batchSize: config.notificationWorker.batchSize,
           lockTimeoutMs,
           signal: abortController.signal,
+          logger,
           run: async (notification, guard) => {
             const checkRecipient = async () => {
               await access.requireAllowed(notification.createdByTelegramId);
