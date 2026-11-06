@@ -11,7 +11,7 @@ export const chatMemberSchema = z.object({
 export type MembershipFailure = 'NOT_A_CHAT_MEMBER' | 'BOT_RECIPIENT_NOT_ALLOWED' | 'MEMBERSHIP_UNVERIFIED';
 
 export async function checkChatMember(telegram: TelegramMembershipGateway, chatId: number, userId: number): Promise<
-  { success: true; member: ChatMemberReference } | { success: false; reason: MembershipFailure }
+  { success: true; member: ChatMemberReference } | { success: false; reason: MembershipFailure; cause?: unknown }
 > {
   try {
     const member = await telegram.getChatMember(chatId, userId);
@@ -23,15 +23,15 @@ export async function checkChatMember(telegram: TelegramMembershipGateway, chatI
     }
     return { success: true, member: { telegramUserId: member.user.id, firstName: member.user.first_name,
       lastName: member.user.last_name ?? null, username: member.user.username ?? null } };
-  } catch {
+  } catch (cause) {
     // An API failure is not evidence of membership. Never fall back to old history.
-    return { success: false, reason: 'MEMBERSHIP_UNVERIFIED' };
+    return { success: false, reason: 'MEMBERSHIP_UNVERIFIED', cause };
   }
 }
 
 export class RecipientMembershipError extends Error {
-  public constructor(public readonly reason: MembershipFailure) {
-    super(`Cannot deliver to reminder recipient: ${reason}`);
+  public constructor(public readonly reason: MembershipFailure, options?: ErrorOptions) {
+    super(`Cannot deliver to reminder recipient: ${reason}`, options);
   }
 }
 
@@ -40,7 +40,7 @@ export class ChatMentionError extends Error {}
 
 export async function requireChatMember(telegram: TelegramMembershipGateway, chatId: number, userId: number): Promise<void> {
   const result = await checkChatMember(telegram, chatId, userId);
-  if (!result.success) throw new RecipientMembershipError(result.reason);
+  if (!result.success) throw new RecipientMembershipError(result.reason, { cause: result.cause });
 }
 
 export async function searchChatMembers(database: Kysely<Database>, telegram: TelegramMembershipGateway,

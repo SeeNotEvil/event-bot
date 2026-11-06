@@ -344,9 +344,10 @@ describe('ToolRegistry and ToolRuntime', () => {
       await expect(runtime.execute('send_message', { text: 'Анна, задача готова?', mentionText: 'Анна', mentionTelegramUserId: null }, runContext))
         .rejects.toBeInstanceOf(RecipientMembershipError);
     }
-    getChatMember.mockRejectedValue(new Error('Telegram unavailable'));
+    const telegramError = new Error('Telegram unavailable');
+    getChatMember.mockRejectedValue(telegramError);
     await expect(runtime.execute('send_message', { text: 'Анна, задача готова?', mentionText: 'Анна', mentionTelegramUserId: null }, runContext))
-      .rejects.toMatchObject({ reason: 'MEMBERSHIP_UNVERIFIED' });
+      .rejects.toMatchObject({ reason: 'MEMBERSHIP_UNVERIFIED', cause: telegramError });
     expect(sendText).not.toHaveBeenCalled();
   });
 });
